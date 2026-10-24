@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/DeviceHub/DeviceHub.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/DeviceHub.Tests/DeviceHub.Tests.csproj" />
+  </Folder>
+</Solution>
