@@ -17,7 +17,7 @@ public enum DeviceState
 /// <summary>What one device reported. Only the fields it knows are filled; the page formats them in its language.</summary>
 public sealed record DeviceReading
 {
-    /// <summary>mouse | headset | controller | laptop</summary>
+    /// <summary>mouse | headset | keyboard | controller | laptop</summary>
     public required string Id { get; init; }
     public required string Model { get; init; }
     public required DeviceState State { get; init; }

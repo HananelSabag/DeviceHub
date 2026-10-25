@@ -55,9 +55,20 @@ internal static partial class AudioNames
 
         var clean = HandsFreeSuffix().Replace(a, "").Trim();
         var kind = Earbuds().IsMatch(clean) || Earbuds().IsMatch(desc) ? "earbuds" : "other";
-        var sub = handsFree ? L("פרופיל שיחה, איכות נמוכה", "Call profile, low quality") : desc.Length > 0 && clean.Length > 0 ? desc : null;
+        var sub = handsFree ? L("פרופיל שיחה, איכות נמוכה", "Call profile, low quality") : desc.Length > 0 && clean.Length > 0 ? Generic(desc) : null;
         return new(clean.Length > 0 ? clean : desc, sub, kind, handsFree);
     }
+
+    /// <summary>Windows' generic endpoint names, in the page's language.</summary>
+    private static string Generic(string desc) => desc switch
+    {
+        "Headphones" => L("אוזניות", "Headphones"),
+        "Headset" => L("אוזניות עם מיקרופון", "Headset"),
+        "Speakers" => L("רמקולים", "Speakers"),
+        "Microphone" => L("מיקרופון", "Microphone"),
+        "Headset Microphone" => L("מיקרופון", "Microphone"),
+        _ => desc,
+    };
 
     [GeneratedRegex(@"^\d+\s*-\s*")] private static partial Regex PortNumber();
     [GeneratedRegex(@"NVIDIA High Definition Audio|Intel\(R\) Display Audio|AMD High Definition Audio", RegexOptions.IgnoreCase)] private static partial Regex DisplayAudio();

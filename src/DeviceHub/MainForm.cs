@@ -19,7 +19,7 @@ internal sealed class MainForm : Form
 {
     private const string Host = "devicehub.example";
     private const int WmDeviceChange = 0x0219;
-    private static readonly Color Backdrop = Color.FromArgb(7, 9, 15);
+    private static readonly Color Backdrop = Color.FromArgb(26, 29, 35);
 
     private readonly WebView2 web = new() { Dock = DockStyle.Fill, DefaultBackgroundColor = Backdrop };
     private readonly System.Windows.Forms.Timer sensorTimer = new() { Interval = 3000 };
@@ -28,23 +28,22 @@ internal sealed class MainForm : Form
     private readonly System.Windows.Forms.Timer audioDebounce = new() { Interval = 250 };
     private AppSettings settings = AppSettings.Load();
     private AudioWatcher? audioWatcher;
-    private bool fullscreen;
     private bool pageReady;
     private bool readingDevices;
     private bool readingSensors;
 
-    public MainForm(bool windowed)
+    public MainForm()
     {
         I18n.English = settings.Language == "en";
         Text = "DeviceHub";
         Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
         BackColor = Backdrop;
-        MinimumSize = new Size(900, 600);
-        Size = new Size(1360, 860);
+        AutoScaleMode = AutoScaleMode.Dpi;
+        MinimumSize = LogicalToDeviceUnits(new Size(980, 640));
+        Size = LogicalToDeviceUnits(new Size(1280, 800));
         StartPosition = FormStartPosition.CenterScreen;
         Controls.Add(web);
 
-        if (!windowed && settings.StartFullscreen) SetFullscreen(true);
         Load += async (_, _) =>
         {
             try { await InitWebAsync(); }
@@ -69,18 +68,15 @@ internal sealed class MainForm : Form
 
     private async Task InitWebAsync()
     {
-        // UI sounds play from controller input too, which a browser wouldn't count as a user gesture.
-        var options = new CoreWebView2EnvironmentOptions("--autoplay-policy=no-user-gesture-required");
         // DEVICEHUB_WEBVIEW_DIR lets a development copy run next to an installed one (WebView2 locks its data folder).
         var webData = Environment.GetEnvironmentVariable("DEVICEHUB_WEBVIEW_DIR") is { Length: > 0 } dir ? dir : Path.Combine(AppSettings.DataDir, "WebView2");
-        var env = await CoreWebView2Environment.CreateAsync(null, webData, options);
+        var env = await CoreWebView2Environment.CreateAsync(null, webData);
         await web.EnsureCoreWebView2Async(env);
 
         var core = web.CoreWebView2;
         core.Settings.AreDefaultContextMenusEnabled = false;
-        core.Settings.IsZoomControlEnabled = false;
         core.Settings.IsStatusBarEnabled = false;
-        // A console, not a browser: no reload, find, print or zoom shortcuts.
+        // An app, not a browser: no reload, find or print shortcuts.
         core.Settings.AreBrowserAcceleratorKeysEnabled = false;
 #if !DEBUG
         core.Settings.AreDevToolsEnabled = false;
@@ -91,22 +87,6 @@ internal sealed class MainForm : Form
 
         try { audioWatcher = new AudioWatcher(() => OnUiThread(() => { audioDebounce.Stop(); audioDebounce.Start(); })); }
         catch (Exception ex) { Debug.WriteLine($"audio watcher: {ex}"); } // the list still refreshes on demand
-
-        FitZoom();
-        SizeChanged += (_, _) => FitZoom();
-    }
-
-    /// <summary>
-    /// The layout is drawn for ~1360 × 760 CSS px. On a big monitor scale everything up together,
-    /// like a console UI on a TV, instead of leaving small text in a sea of space; a wide, short window
-    /// scales by its height so the sound row never slides under the hints.
-    /// </summary>
-    private void FitZoom()
-    {
-        if (web.CoreWebView2 is null || ClientSize.Width == 0 || ClientSize.Height == 0) return;
-        var cssWidth = ClientSize.Width * 96.0 / DeviceDpi;
-        var cssHeight = ClientSize.Height * 96.0 / DeviceDpi;
-        web.ZoomFactor = Math.Clamp(Math.Min(cssWidth / 1360, cssHeight / 760), 1.0, 2.0);
     }
 
     /// <summary>Minimized: stop reading and suspend the page. Restored: read everything once, then carry on.</summary>
@@ -175,6 +155,27 @@ internal sealed class MainForm : Form
                     PostAudio(); // the watcher will post again; this one makes the press feel instant
                     break;
 
+                case "settingsFor":
+                    var forDevice = msg.GetProperty("device").GetString() ?? "";
+                    Post("deviceSettings", new { device = forDevice, settings = await DeviceControls.ReadSettings(forDevice) });
+                    break;
+
+                case "control":
+                    var device = msg.GetProperty("device").GetString() ?? "";
+                    var action = msg.GetProperty("action").GetString() ?? "";
+                    try
+                    {
+                        var after = await DeviceControls.Apply(device, action, msg.GetProperty("value").Clone());
+                        Post("deviceSettings", new { device, settings = after });
+                        Post("controlDone", new { device, action });
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"control {device}/{action}: {ex}");
+                        Post("error", new { cmd = "control", device, action, message = ex.Message });
+                    }
+                    break;
+
                 case "saveSettings":
                     var languageBefore = settings.Language;
                     settings = JsonSerializer.Deserialize<AppSettings>(msg.GetProperty("settings").GetRawText(), Program.Json) ?? settings;
@@ -182,18 +183,6 @@ internal sealed class MainForm : Form
                     I18n.English = settings.Language == "en";
                     Post("settings", settings);
                     if (settings.Language != languageBefore) PostAudio(); // device names come from here, in the chosen language
-                    break;
-
-                case "minimize":
-                    WindowState = FormWindowState.Minimized;
-                    break;
-
-                case "toggleFullscreen":
-                    SetFullscreen(!fullscreen);
-                    break;
-
-                case "exit":
-                    Close();
                     break;
             }
         }
@@ -207,6 +196,7 @@ internal sealed class MainForm : Form
     {
         PostAudio();
         ReadDevices();
+        ReadSensors();
         sensorTimer.Start();
         deviceTimer.Stop();
         deviceTimer.Start();
@@ -258,23 +248,5 @@ internal sealed class MainForm : Form
         if (IsDisposed || !IsHandleCreated) return;
         try { BeginInvoke(action); }
         catch (InvalidOperationException) { } // window closing
-    }
-
-    private void SetFullscreen(bool on)
-    {
-        fullscreen = on;
-        if (on)
-        {
-            // A borderless window that covers the whole monitor: Windows treats it as full screen and hides the taskbar.
-            FormBorderStyle = FormBorderStyle.None;
-            WindowState = FormWindowState.Normal;
-            Bounds = (IsHandleCreated ? Screen.FromHandle(Handle) : Screen.PrimaryScreen!).Bounds;
-        }
-        else
-        {
-            FormBorderStyle = FormBorderStyle.Sizable;
-            Size = new Size(1360, 860);
-            CenterToScreen();
-        }
     }
 }

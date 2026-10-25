@@ -18,10 +18,11 @@ internal static class Program
     };
 
     /// <summary>
-    /// DeviceHub.exe                              → the app (in a window unless full screen is on in Settings)
-    /// DeviceHub.exe --windowed                   → the app, always in a window
+    /// DeviceHub.exe                              → the app
     /// DeviceHub.exe --dump-json out.json [en]    → read every device and the sound devices once, save them (read-only)
     /// DeviceHub.exe --audio-switch-test out.json → switch the default output to another device and straight back
+    /// DeviceHub.exe --settings mouse out.json    → a device page's settings
+    /// DeviceHub.exe --control mouse dpi 1600 out.json → one change, then the settings read back
     /// </summary>
     [STAThread]
     private static int Main(string[] args)
@@ -34,6 +35,31 @@ internal static class Program
             return 0;
         }
 
+        // A device page's settings, as the page would get them.
+        if (args is ["--settings", var settingsDevice, var settingsPath, ..])
+        {
+            var current = DeviceControls.ReadSettings(settingsDevice).GetAwaiter().GetResult();
+            File.WriteAllText(settingsPath, JsonSerializer.Serialize(current, Json));
+            return 0;
+        }
+
+        // One change from a script: --control mouse polling 1000 out.json (the value is JSON).
+        if (args is ["--control", var device, var action, var valueJson, var controlPath, ..])
+        {
+            try
+            {
+                using var value = JsonDocument.Parse(valueJson);
+                var after = DeviceControls.Apply(device, action, value.RootElement.Clone()).GetAwaiter().GetResult();
+                File.WriteAllText(controlPath, JsonSerializer.Serialize(new { ok = true, after }, Json));
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                File.WriteAllText(controlPath, JsonSerializer.Serialize(new { ok = false, error = ex.Message }, Json));
+                return 1;
+            }
+        }
+
         if (args is ["--audio-switch-test", var testPath, ..])
         {
             var result = AudioSwitchTest();
@@ -42,7 +68,7 @@ internal static class Program
         }
 
         ApplicationConfiguration.Initialize();
-        Application.Run(new MainForm(windowed: args.Contains("--windowed")));
+        Application.Run(new MainForm());
         return 0;
     }
 

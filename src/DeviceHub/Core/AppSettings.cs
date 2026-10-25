@@ -6,8 +6,6 @@ namespace DeviceHub.Core;
 public sealed record AppSettings
 {
     public string Language { get; init; } = "he";
-    public bool Sounds { get; init; } = true;
-    public bool StartFullscreen { get; init; }
     /// <summary>Switching the sound also moves calls (Discord, Teams…) to the same device.</summary>
     public bool SwitchCalls { get; init; } = true;
 
