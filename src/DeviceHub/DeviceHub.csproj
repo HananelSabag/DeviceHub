@@ -13,7 +13,7 @@
     <Version>0.3.0</Version>
     <Product>DeviceHub</Product>
     <Authors>Hananel Sabag</Authors>
-    <Description>One small console-style app for my own mouse, headset, controller, laptop sensors and sound devices.</Description>
+    <Description>A small control center for my own mouse, headset, keyboard, controller, laptop and sound devices.</Description>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ApplicationIcon>app.ico</ApplicationIcon>
   </PropertyGroup>
