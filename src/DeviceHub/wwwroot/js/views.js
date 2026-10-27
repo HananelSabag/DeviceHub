@@ -248,7 +248,15 @@ function headsetBody(app) {
       <div class="eq-actions"><button class="btn primary" data-eq-apply${changed && !off ? '' : ' disabled'}>${esc(t('h.apply'))}</button>
         <button class="btn quiet" data-eq-reset${changed ? '' : ' disabled'}>${esc(t('h.reset'))}</button></div></div>`;
   const unknown = v => v == null ? `<span class="unknown">${esc(t('h.unknown'))}</span>` : '';
+  const profiles = s.profiles ?? [];
+  const profileList = profiles.length
+    ? `<div class="profiles">${profiles.map(p => `<span class="profile"><button class="btn" data-profile-apply="${esc(p.name)}"${off ? ' disabled' : ''}><bdi>${esc(p.name)}</bdi></button><button class="profile-x" data-profile-delete="${esc(p.name)}" aria-label="${esc(t('h.profile.delete'))}">×</button></span>`).join('')}</div>`
+    : `<span class="unknown">${esc(t('h.profile.none'))}</span>`;
   return `${off ? empty(t('h.off'), t('h.off.sub')) : ''}
+    <section class="group"><h2>${esc(t('h.profiles'))}</h2>
+      ${row(t('h.profiles.apply'), t('h.profiles.sub'), profileList)}
+      ${row(t('h.profile.save'), t('h.profile.save.sub'), `<div class="text-line"><input class="text-input short" type="text" maxlength="24" placeholder="${esc(t('h.profile.placeholder'))}" data-profile-name dir="auto"><button class="btn primary" data-profile-save>${esc(t('h.profile.saveBtn'))}</button></div>`)}
+    </section>
     <section class="group"><h2>${esc(t('h.voice'))}</h2>
       ${row(t('h.sidetone'), t('h.sidetone.sub'), `<div>${seg('headset.sidetone', [0, 1, 2, 3].map(v => [v, t(`h.side.${v}`)]), s.sidetone, off)}${unknown(s.sidetone)}</div>`)}
       ${row(t('h.autoOff'), t('h.autoOff.sub'), `<div>${seg('headset.autoOff', [[0, t('h.never')], ...[5, 10, 15, 30, 60, 90].map(v => [v, t('min', { n: v })])], s.autoOff, off)}${unknown(s.autoOff)}</div>`)}
@@ -269,8 +277,8 @@ export function eqCurve(bands) {
     <polyline class="line" points="${line}"/></svg>`;
 }
 
-export const EFFECTS = ['static', 'breathing', 'wave', 'spectrum', 'gradient', 'music'];
-export const SCREENS = ['off', 'clock', 'devices', 'music', 'cycle', 'text', 'image', 'stars', 'matrix', 'energy', 'sound', 'goal'];
+export const EFFECTS = ['static', 'breathing', 'wave', 'spectrum', 'gradient', 'music', 'reactive', 'ripple'];
+export const SCREENS = ['off', 'clock', 'devices', 'system', 'music', 'cycle', 'text', 'image', 'show', 'stars', 'matrix', 'energy', 'power', 'sound', 'goal'];
 
 /** Colour swatches with a custom picker at the end; withNone adds "no colour" first. */
 const swatches = (ctl, current, withNone = false) => `<div class="swatches" role="radiogroup" data-swatch="${ctl}">
@@ -289,6 +297,8 @@ function keyboardBody(app) {
   const colours = !l.enabled || fx === 'spectrum' || fx === 'wave' ? ''
     : fx === 'gradient'
       ? row(t('k.from'), '', swatches('main', l.main)) + row(t('k.to'), '', swatches('second', l.second))
+    : fx === 'reactive' || fx === 'ripple'
+      ? row(t('k.press'), '', swatches('main', l.main)) + row(t('k.background'), '', swatches('second', l.second))
       : row(t('k.main'), '', swatches('main', l.main)) + row(t('k.accent'), t('k.accent.sub'), swatches('accent', l.accent, true));
   const slider = (key, label, min, max, value, unit) => row(label, '', `<div class="slider-line"><input type="range" min="${min}" max="${max}" step="1" value="${value}" data-kb="${key}"><output>${value}${unit}</output></div>`);
   const lighting = `<section class="group"><h2>${esc(t('k.lighting'))}</h2>
@@ -296,7 +306,7 @@ function keyboardBody(app) {
       ${l.enabled ? `<div class="row stack"><div class="cards" role="radiogroup">${EFFECTS.map(e => `<button class="card-pick" role="radio" data-fx="${e}" aria-checked="${fx === e}">
           <span class="fx-swatch" style="background:${effectSwatch(e, l)}"></span><b>${esc(t(`fx.${e}`))}</b><small>${esc(t(`fx.${e}.sub`))}</small></button>`).join('')}</div></div>` : ''}
       ${colours}
-      ${l.enabled && ['breathing', 'spectrum', 'wave'].includes(fx) ? slider('speed', t('k.speed'), 1, 10, l.speed, '') : ''}
+      ${l.enabled && ['breathing', 'spectrum', 'wave', 'reactive', 'ripple'].includes(fx) ? slider('speed', t('k.speed'), 1, 10, l.speed, '') : ''}
       ${l.enabled ? slider('brightness', t('k.brightness'), 5, 100, l.brightness, '%') : ''}
       <div class="row stack kb-wrap ${l.enabled ? '' : 'kb-off'}">${keyboardPreview(s.layout, l)}${l.enabled ? '' : `<span class="kb-off-note">${esc(t('k.ownNote'))}</span>`}</div>
     </section>`;
@@ -344,25 +354,52 @@ function controllerBody(app) {
 
 function laptopBody(app) {
   const d = app.devices.laptop;
-  if (!d || d.state !== 'ready' || d.temperature == null) return empty(stateLabel('laptop', d ?? { state: 'missing' }), stateNote('laptop', d ?? { state: 'missing' }));
-  return laptopReadouts(app) + `<p class="note">${esc(t('l.note'))}</p>`;
+  if (!d || d.state !== 'ready') return empty(stateLabel('laptop', d ?? { state: 'missing' }), stateNote('laptop', d ?? { state: 'missing' }));
+  const modes = [['efficiency', t('l.mode.efficiency')], ['balanced', t('l.mode.balanced')], ['performance', t('l.mode.performance')]];
+  return laptopReadouts(app) + `
+    <section class="group" style="margin-top:16px">
+      ${row(t('l.mode'), t('l.mode.sub'), seg('laptop.powerMode', modes, d.powerMode))}
+    </section>
+    <p class="note">${esc(t('l.note'))}</p>`;
 }
 
-/** The two live readouts and the temperature trail: redrawn every three seconds. */
+const pct = v => v == null ? '--' : Math.round(v);
+const heat = v => v >= 90 ? 'crit' : v >= 80 ? 'low' : '';
+
+/** The live part of the laptop page, redrawn every three seconds: four cards, the fans, and the temperature trail. */
 export function laptopReadouts(app) {
   const d = app.devices.laptop;
-  const temp = d.temperature, fan = d.fanDuty ?? 0;
+  const card = (brand, cls, label, big, unit, sub, meter) => `<div class="readout ${cls}" data-brand="${brand}">
+      <b>${esc(label)}</b><span class="big">${big}<small>${unit}</small></span>
+      ${meter != null ? `<span class="meter"><i style="--v:${Math.max(0, Math.min(100, meter))}%"></i></span>` : ''}
+      <span class="readout-sub">${sub}</span></div>`;
+  const fan = (name, duty, rpm) => `<div class="fan-line"><span>${esc(name)}</span><span class="meter"><i style="--v:${duty ?? 0}%"></i></span>
+      <b>${rpm != null ? `${rpm.toLocaleString('en-US')} RPM` : '--'}</b><small>${pct(duty)}%</small></div>`;
+  const battery = d.laptopBattery == null ? esc(t('l.noBattery'))
+    : d.onCharger ? esc(t(d.charging ? 'l.charging' : 'l.onCharger')) : esc(t('l.onBattery', { w: d.watts ? Math.abs(d.watts) : '--' }));
+  const used = d.memoryUsed, total = d.memoryTotal;
+  const cards = [
+    card('heat', heat(d.temperature), t('l.cpu'), pct(d.temperature), '°C', esc(t('l.load', { n: pct(d.cpuLoad) })) + (d.cpuSpeed ? ` · ${esc(t('l.speed', { n: d.cpuSpeed }))}` : ''), d.cpuLoad),
+    card('ps', heat(d.gpuTemperature), t('l.gpu'), pct(d.gpuTemperature), '°C', esc(t('l.load', { n: pct(d.gpuLoad) })), d.gpuLoad),
+    card('hub', '', t('l.memory'), used ?? '--', ' GB', esc(t('l.of', { n: total ?? '--' })), used && total ? used / total * 100 : null),
+    card('razer', d.laptopBattery != null && d.laptopBattery <= 20 && !d.onCharger ? 'low' : '', t('l.battery'), d.laptopBattery ?? '--', '%', battery, d.laptopBattery),
+  ].join('');
+
+  // The last five minutes of both temperatures, on one scale.
   const hist = app.temps;
   const n = hist.length;
-  const min = Math.min(40, ...hist), max = Math.max(95, ...hist);
-  const pts = hist.map((v, i) => `${n < 2 ? 0 : (i / (n - 1)) * 1000},${120 - ((v - min) / (max - min)) * 110}`).join(' ');
+  const all = hist.flatMap(h => [h.c, h.g]).filter(v => v != null);
+  const min = Math.min(35, ...all), max = Math.max(95, ...all);
+  const line = key => hist.map((h, i) => h[key] == null ? null : `${n < 2 ? 0 : (i / (n - 1)) * 1000},${120 - ((h[key] - min) / (max - min)) * 110}`).filter(Boolean).join(' ');
   const minutes = Math.round((n * 3) / 60);
-  return `<div id="laptop-live"><div class="readouts">
-      <div class="readout ${temp >= 90 ? 'very-hot' : temp >= 80 ? 'hot' : ''}" data-brand="heat"><b>${esc(t('l.temp'))}</b><span class="big">${temp}<small>°C</small></span><span class="meter"><i style="--v:${Math.min(100, temp)}%"></i></span></div>
-      <div class="readout" data-brand="hub"><b>${esc(t('l.fan'))}</b><span class="big">${fan}<small>%</small></span><span class="meter"><i style="--v:${fan}%"></i></span></div>
-    </div>
-    <section class="panel" style="max-width:980px"><h2>${esc(t('l.history'))}</h2>
-      <svg class="spark" viewBox="0 0 1000 120" preserveAspectRatio="none" aria-hidden="true">${n > 1 ? `<polygon class="area" points="0,120 ${pts} 1000,120"/><polyline class="line" points="${pts}"/>` : ''}</svg>
-      <div class="spark-legend"><span>${minutes > 0 ? esc(t('l.ago', { n: minutes })) : ''}</span><span>${esc(t('l.now'))}</span></div>
-    </section></div>`;
+  return `<div id="laptop-live"><div class="readouts four">${cards}</div>
+    <div class="laptop-row">
+      <section class="panel"><h2>${esc(t('l.fans'))}</h2>${fan(t('l.fanCpu'), d.fanDuty, d.fanRpm)}${fan(t('l.fanGpu'), d.fan2Duty, d.fan2Rpm)}</section>
+      <section class="panel"><h2>${esc(t('l.history'))}</h2>
+        <svg class="spark" viewBox="0 0 1000 120" preserveAspectRatio="none" aria-hidden="true">
+          ${n > 1 ? `<polyline class="line cpu" points="${line('c')}"/><polyline class="line gpu" points="${line('g')}"/>` : ''}</svg>
+        <div class="spark-legend"><span>${minutes > 0 ? esc(t('l.ago', { n: minutes })) : ''}</span>
+          <span class="keys"><i class="cpu"></i>CPU <i class="gpu"></i>GPU</span><span>${esc(t('l.now'))}</span></div>
+      </section>
+    </div></div>`;
 }

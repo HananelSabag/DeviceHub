@@ -395,8 +395,30 @@ input[type="range"] { accent-color: var(--accent, var(--hub)); }
 .spark .line { fill: none; stroke: var(--heat); stroke-width: 2; vector-effect: non-scaling-stroke; }
 .spark .area { fill: color-mix(in srgb, var(--heat) 12%, transparent); }
 .spark-legend { display: flex; justify-content: space-between; color: var(--faint); font-size: 0.8rem; margin-top: 6px; direction: ltr; } /* time runs left to right, as the line does */
-.readout.hot .big { color: var(--low); }
-.readout.very-hot .big { color: var(--crit); }
+.readout.hot .big, .readout.low .big { color: var(--low); }
+.readout.very-hot .big, .readout.crit .big { color: var(--crit); }
+.readouts.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.readouts.four .big { font-size: 2.4rem; }
+.readout-sub { display: block; margin-top: 8px; color: var(--dim); font-size: 0.86rem; font-weight: 600; }
+.laptop-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr); gap: 16px; max-width: 980px; }
+.fan-line { display: grid; grid-template-columns: 90px minmax(60px, 1fr) auto 40px; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line-soft); }
+.panel > h2 + .fan-line { border-top: 0; }
+.fan-line > span:first-child { color: var(--dim); font-weight: 700; }
+.fan-line b { font-weight: 800; white-space: nowrap; direction: ltr; }
+.fan-line small { color: var(--faint); font-weight: 700; text-align: end; }
+.spark .line.cpu { stroke: var(--heat); }
+.spark .line.gpu { stroke: var(--ps); }
+.spark-legend .keys { display: inline-flex; align-items: center; gap: 6px; }
+.spark-legend .keys i { width: 10px; height: 3px; border-radius: 2px; background: var(--heat); margin-inline-start: 8px; }
+.spark-legend .keys i.gpu { background: var(--ps); }
+
+/* Headset profiles: one button each, a small × to delete. */
+.profiles { display: flex; flex-wrap: wrap; gap: 8px; }
+.profile { display: inline-flex; align-items: center; }
+.profile .btn { border-start-end-radius: 0; border-end-end-radius: 0; }
+.profile-x { width: 30px; height: 34px; border: 1px solid var(--line); border-inline-start: 0; border-start-end-radius: var(--radius-sm); border-end-end-radius: var(--radius-sm); background: var(--panel); color: var(--faint); font-size: 1.1rem; }
+.profile-x:hover { color: var(--crit); background: var(--raised); }
+.text-input.short { width: 180px; }
 
 .empty-state { display: grid; justify-items: start; gap: 6px; padding: 26px 22px; border: 1px dashed var(--line); border-radius: var(--radius-lg); color: var(--dim); max-width: 980px; }
 .empty-state b { color: var(--ink); font-size: 1.05rem; }

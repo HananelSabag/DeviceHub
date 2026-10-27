@@ -186,7 +186,16 @@ document.addEventListener('click', e => {
     const [device, action] = segEl.dataset.ctl.split('.');
     if (device === 'controller' && action === 'player') { app.drafts.controller.player = Number(d.v); renderPage(); applyController(); return; }
     if (el.getAttribute('aria-checked') === 'true') return;
-    control(device, action, action === 'eqPreset' ? d.v : Number(d.v), segEl);
+    control(device, action, /^-?\d+(\.\d+)?$/.test(d.v) ? Number(d.v) : d.v, segEl);
+    return;
+  }
+
+  // Headset profiles
+  if (d.profileApply) { app.lastProfile = d.profileApply; control('headset', 'applyProfile', d.profileApply, el); return; }
+  if (d.profileDelete) { control('headset', 'deleteProfile', d.profileDelete); return; }
+  if ('profileSave' in d) {
+    const name = $('[data-profile-name]')?.value.trim();
+    if (name) control('headset', 'saveProfile', name, el);
     return;
   }
 
@@ -213,7 +222,9 @@ document.addEventListener('click', e => {
 });
 
 document.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && e.target.matches?.('[data-screen-text]')) { app.drafts.keyboard.screen.text = e.target.value; applyScreen(); }
+  if (e.key !== 'Enter') return;
+  if (e.target.matches?.('[data-screen-text]')) { app.drafts.keyboard.screen.text = e.target.value; applyScreen(); }
+  if (e.target.matches?.('[data-profile-name]') && e.target.value.trim()) control('headset', 'saveProfile', e.target.value.trim());
 });
 
 // ---- Sliders and pickers: draw while dragging, send on release ----
@@ -307,7 +318,7 @@ on('devices', list => {
 
 on('laptop', d => {
   app.devices.laptop = d;
-  if (d.temperature != null) { app.temps.push(d.temperature); if (app.temps.length > 100) app.temps.shift(); }
+  if (d.temperature != null || d.gpuTemperature != null) { app.temps.push({ c: d.temperature, g: d.gpuTemperature }); if (app.temps.length > 100) app.temps.shift(); }
   renderRail();
   if (app.page === 'overview') renderPage();
   if (app.page === 'laptop') {
@@ -336,6 +347,12 @@ on('audio', state => {
 });
 
 on('deviceSettings', ({ device, settings }) => {
+  if (device === 'laptop') {
+    // The power mode belongs to the laptop's reading; show the new one now rather than at the next reading.
+    if (app.devices.laptop) app.devices.laptop = { ...app.devices.laptop, powerMode: settings?.powerMode };
+    if (app.page === 'laptop') renderPage();
+    return;
+  }
   app.deviceSettings[device] = settings;
   app.drafts[device] = draftFrom(device, settings);
   shapes[device] = shape(app.devices[device]);
@@ -343,7 +360,10 @@ on('deviceSettings', ({ device, settings }) => {
 });
 
 // The keyboard changes as you click, so it needs no "saved" note; the others confirm.
-on('controlDone', c => { if (c.device !== 'keyboard') toast(t('saved')); });
+on('controlDone', c => {
+  if (c.device === 'keyboard') return;
+  toast(c.action === 'applyProfile' && app.lastProfile ? t('h.profile.applied', { name: app.lastProfile }) : t('saved'));
+});
 
 on('error', e => {
   if (e.cmd === 'setAudio') { app.pendingAudio = null; renderPage(); }

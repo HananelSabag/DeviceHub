@@ -12,7 +12,11 @@ function hue(h) {
   return [r, g, b].map(v => Math.round(v * 255));
 }
 
-export const ANIMATED = ['breathing', 'spectrum', 'wave', 'music'];
+export const ANIMATED = ['breathing', 'spectrum', 'wave', 'music', 'reactive', 'ripple'];
+
+// The preview has no real key presses: it pretends one every 1.5 s, on a key picked from this row of letters.
+const DEMO_KEYS = [[4.5, 3.5], [8.5, 2.5], [6.5, 4.5], [11.5, 3.5], [3.5, 2.5], [9.5, 4.5]];
+const demoPress = t => { const i = Math.floor(t / 1.5); return { age: t - i * 1.5, at: DEMO_KEYS[i % DEMO_KEYS.length] }; };
 
 /** The colour of one key ({ code, x, w } in key units) at time t, as #rrggbb. */
 export function keyColor(l, key, layout, t) {
@@ -29,6 +33,21 @@ export function keyColor(l, key, layout, t) {
     case 'gradient': c = lerp(main, second, x); break;
     // The preview has no sound to follow: it shows a beat instead.
     case 'music': c = accent ? own : scale(own, 0.08 + 0.92 * Math.abs(Math.sin(t * 3.2)) ** 3); break;
+    case 'reactive':
+    case 'ripple': {
+      const fade = 1.95 - speed * 0.145;
+      const { age, at } = demoPress(t);
+      const kx = key.x + key.w / 2, ky = (key.y ?? 0) + 0.5;
+      const same = Math.abs(kx - at[0]) < 0.6 && Math.abs(ky - at[1]) < 0.6;
+      let v = same ? Math.max(0, 1 - age / fade) : 0;
+      if (l.effect === 'ripple') {
+        const life = fade * 1.6, r = age * (6 + speed * 1.8);
+        const d = Math.sqrt((kx - at[0]) ** 2 + (ky - at[1]) ** 2 * 1.3);
+        v = Math.max(v, Math.max(0, 1 - Math.abs(d - r) / 1.3) * Math.max(0, 1 - age / life));
+      }
+      c = lerp(scale(second, 0.35), main, Math.min(1, v));
+      break;
+    }
     default: c = own;
   }
   c = scale(c, (l.brightness ?? 100) / 100);
@@ -40,7 +59,7 @@ export function keyboardPreview(layout, lighting, t = 0) {
   const U = 30, G = 3;
   const on = lighting?.enabled;
   const rects = layout.keys.map(([code, x, y, w, h]) => {
-    const fill = on ? keyColor(lighting, { code, x, w }, layout, t) : '#2D323C';
+    const fill = on ? keyColor(lighting, { code, x, y, w }, layout, t) : '#2D323C';
     return `<rect data-code="${code}" x="${x * U + G / 2}" y="${y * U + G / 2}" width="${w * U - G}" height="${h * U - G}" rx="3" fill="${fill}"/>`;
   }).join('');
   return `<svg class="kb-preview" viewBox="0 0 ${layout.width * U} ${layout.height * U}" role="img" aria-label="Apex 5">${rects}</svg>`;
@@ -50,7 +69,7 @@ export function keyboardPreview(layout, lighting, t = 0) {
 export function recolor(svg, layout, lighting, t) {
   if (!svg) return;
   const rects = svg.children;
-  layout.keys.forEach(([code, x, , w], i) => rects[i]?.setAttribute('fill', keyColor(lighting, { code, x, w }, layout, t)));
+  layout.keys.forEach(([code, x, y, w], i) => rects[i]?.setAttribute('fill', keyColor(lighting, { code, x, y, w }, layout, t)));
 }
 
 /** A tiny swatch that hints at each effect, for the effect buttons. */
@@ -62,6 +81,8 @@ export function effectSwatch(effect, l) {
     case 'wave': return 'repeating-linear-gradient(90deg, #ff2a2a 0 12%, #ffd000 12% 24%, #2bea5a 24% 36%, #00c8ff 36% 48%, #8b3dff 48% 60%)';
     case 'gradient': return `linear-gradient(90deg, ${main}, ${second})`;
     case 'music': return `repeating-linear-gradient(90deg, ${main} 0 8%, #111 8% 12%, ${main} 12% 15%, #111 15% 22%)`;
+    case 'reactive': return `radial-gradient(circle at 30% 50%, ${main} 0 14%, ${second} 15% 100%)`;
+    case 'ripple': return `radial-gradient(circle at 30% 50%, ${second} 0 20%, ${main} 22% 30%, ${second} 32% 100%)`;
     default: return main;
   }
 }

@@ -10,7 +10,7 @@ namespace DeviceHub.Lighting;
 /// <summary>What the keyboard's OLED shows. off: DeviceHub leaves it alone.</summary>
 internal sealed record OledSettings
 {
-    /// <summary>off | clock | devices | music | text | image | cycle | stars | matrix | energy | sound | goal</summary>
+    /// <summary>off | clock | devices | system | music | text | image | cycle | show | stars | matrix | energy | sound | goal | power</summary>
     public string Mode { get; init; } = "off";
     public string Text { get; init; } = "";
 }
@@ -131,6 +131,27 @@ internal static class OledScreen
                 var d = devices.FirstOrDefault(x => x.Id == cols[i]);
                 if (d is { Charging: true }) g.FillRectangle(Brushes.White, cx - 5, 37, 10, 2);
             }
+            return Pack(bmp, shift.Dx, shift.Dy);
+        }
+    }
+
+    /// <summary>The laptop at work: CPU and GPU, each with its temperature and a bar for how busy it is.</summary>
+    public static byte[] Workload(DeviceReading? laptop, (int Dx, int Dy) shift)
+    {
+        var (bmp, g) = Canvas();
+        using (bmp) using (g)
+        {
+            using var label = new Font(Body, 10, FontStyle.Bold, GraphicsUnit.Pixel);
+            using var num = new Font(Digits, 15, FontStyle.Bold, GraphicsUnit.Pixel);
+            void Line(int y, string name, int? temp, int? load)
+            {
+                g.DrawString(name, label, Brushes.White, 0, y + 3);
+                g.DrawString(temp is { } t ? $"{t}°" : "--", num, Brushes.White, 26, y);
+                g.DrawRectangle(Pens.White, 66, y + 5, 61, 8);
+                if (load is { } l) g.FillRectangle(Brushes.White, 68, y + 7, (int)Math.Round(57 * Math.Clamp(l, 0, 100) / 100.0), 5);
+            }
+            Line(1, "CPU", laptop?.Temperature, laptop?.CpuLoad);
+            Line(21, "GPU", laptop?.GpuTemperature, laptop?.GpuLoad);
             return Pack(bmp, shift.Dx, shift.Dy);
         }
     }

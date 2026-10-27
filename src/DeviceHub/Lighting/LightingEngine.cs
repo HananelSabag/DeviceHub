@@ -40,6 +40,28 @@ internal sealed class LightingEngine : IDisposable
     private ScreenAnimation? animation;
     private string? animationMode;
     private long animationStart;
+    private DeviceReading? laptop;
+    private long laptopAsked = -10_000;
+    private readonly List<KeyboardEffects.Press> presses = [];
+    private long lastPress = -100_000;
+    private bool restingSent;
+
+    /// <summary>Raised when an effect starts or stops needing key presses; the window listens only while one does.</summary>
+    public event Action<bool>? KeysWantedChanged;
+    public bool KeysWanted => KeyboardEffects.WantsKeys(lighting);
+
+    /// <summary>A key on the Apex went down (HID usage code).</summary>
+    public void KeyPressed(byte code)
+    {
+        lock (gate)
+        {
+            var now = clock.ElapsedMilliseconds;
+            presses.RemoveAll(p => now / 1000.0 - p.T > 4);
+            if (presses.Count < 64) presses.Add(new(code, now / 1000.0));
+            lastPress = now;
+        }
+        wake.Set();
+    }
 
     /// <summary>Raised (on the engine's thread) with every new picture sent to the screen.</summary>
     public event Action<byte[]>? ScreenChanged;
@@ -55,12 +77,14 @@ internal sealed class LightingEngine : IDisposable
 
     public void Configure(KeyboardLighting newLighting, OledSettings newScreen, List<(byte[] Bits, int DelayMs)>? newPicture = null)
     {
+        var wanted = KeysWanted;
         lock (gate)
         {
-            if (newLighting != lighting) { lighting = newLighting; lightsDirty = true; }
+            if (newLighting != lighting) { lighting = newLighting; lightsDirty = true; restingSent = false; }
             if (newScreen != screen || newPicture is not null) { screen = newScreen; screenDirty = true; screenDue = 0; pictureFrame = 0; }
             if (newPicture is not null) picture = newPicture;
         }
+        if (KeysWanted != wanted) KeysWantedChanged?.Invoke(KeysWanted);
         wake.Set();
     }
 
@@ -105,12 +129,23 @@ internal sealed class LightingEngine : IDisposable
         var now = clock.ElapsedMilliseconds;
         var wait = 5000;
         // The sound level, only when something follows the music (it is created on this thread, and stays on it).
-        if ((lighting.Enabled && lighting.Effect == "music") || screen.Mode is "sound" or "stars")
+        if ((lighting.Enabled && lighting.Effect == "music") || screen.Mode is "sound" or "stars" or "show")
             level = (sound ??= new SoundLevel()).Read();
 
         if (lighting.Enabled)
         {
-            if (KeyboardEffects.Animated(lighting))
+            if (KeyboardEffects.WantsKeys(lighting))
+            {
+                // Key presses: 30 frames a second while a press is still showing, then one resting frame and quiet.
+                var showing = now - lastPress < KeyboardEffects.Fade(lighting) * 1700;
+                if (showing || !restingSent || lightsDirty)
+                {
+                    ApexKeyboard.SendColors(handle!, KeyboardEffects.Frame(lighting, now / 1000.0, level, presses));
+                    restingSent = !showing;
+                }
+                wait = showing ? 33 : 1000;
+            }
+            else if (KeyboardEffects.Animated(lighting))
             {
                 ApexKeyboard.SendColors(handle!, KeyboardEffects.Frame(lighting, now / 1000.0, level));
                 wait = 50;
@@ -181,6 +216,10 @@ internal sealed class LightingEngine : IDisposable
         {
             case "devices":
                 return (OledScreen.Devices(devices, OledScreen.Shift(time)), 5000);
+            case "system":
+                // The laptop's own sensors, read here every 2 seconds (the window may be closed).
+                if (now - laptopAsked >= 2000) { laptop = DeviceReader.ReadLaptop(); laptopAsked = now; }
+                return (OledScreen.Workload(laptop, OledScreen.Shift(time)), 2000);
             case "text":
                 return (OledScreen.Text(screen.Text, OledScreen.Shift(time)), 30_000);
             case "image" when picture.Count > 0:

@@ -1,12 +1,15 @@
+using System.Management;
 using System.Runtime.InteropServices;
+using DeviceHub.Interop;
 using Microsoft.Win32;
 
 namespace DeviceHub.Devices;
 
 /// <summary>
-/// Temperature and fan duty of a Clevo-built laptop, read through InsydeDCHU.dll: the vendor's own DLL that
-/// Control Center 3.0 uses, installed with its ACPI bridge driver. Only GetDCHU_Data_Buffer is called, with the
-/// read command 12. Fan control stays in Control Center; nothing here writes fan or EC settings.
+/// The laptop itself. Temperatures and fans come from InsydeDCHU.dll, the vendor's own DLL that Control Center 3.0
+/// uses (installed with its ACPI bridge driver); only GetDCHU_Data_Buffer is called, with the read command 12.
+/// Load comes from Windows' performance counters (as in Task Manager), memory and battery from Windows itself.
+/// The one thing changed here is Windows' power mode. Fan control stays in Control Center: nothing writes fan or EC settings.
 /// </summary>
 internal static unsafe class LaptopSensors
 {
@@ -16,6 +19,9 @@ internal static unsafe class LaptopSensors
     private static bool loaded;
     private static string? loadError;
     private static string? model;
+    private static Pdh? pdh;
+    private static long nextBatteryLook;
+    private static double? watts;
 
     public static string Model => model ??= ReadModel();
 
@@ -24,23 +30,107 @@ internal static unsafe class LaptopSensors
         lock (gate)
         {
             if (!loaded) Load();
-            if (getData == null) return new() { Id = "laptop", Model = Model, State = DeviceState.Missing, Detail = loadError };
-            var buf = new byte[256];
-            fixed (byte* p = buf) getData(FanStatusCommand, p);
-            var (temp, duty) = Parse(buf);
-            return temp is null
-                ? new() { Id = "laptop", Model = Model, State = DeviceState.Error, Detail = "no temperature in the answer" }
-                : new() { Id = "laptop", Model = Model, State = DeviceState.Ready, Temperature = temp, FanDuty = duty };
+            var ec = (Fans?)null;
+            if (getData != null)
+            {
+                var buf = new byte[256];
+                fixed (byte* p = buf) getData(FanStatusCommand, p);
+                ec = Parse(buf);
+            }
+            var load = (pdh ??= new Pdh()).Read();
+            var (usedGb, totalGb) = Memory();
+            var power = Power();
+            if (ec is null && load.CpuPercent is null && power.Percent is null)
+                return new() { Id = "laptop", Model = Model, State = DeviceState.Missing, Detail = loadError };
+            return new()
+            {
+                Id = "laptop", Model = Model, State = DeviceState.Ready,
+                Temperature = ec?.CpuTemp, GpuTemperature = ec?.GpuTemp,
+                FanDuty = ec?.CpuDuty, Fan2Duty = ec?.GpuDuty, FanRpm = ec?.CpuRpm, Fan2Rpm = ec?.GpuRpm,
+                CpuLoad = Round(load.CpuPercent is { } c ? Math.Min(100, c) : null), CpuSpeed = Round(load.CpuPerformance), GpuLoad = Round(load.GpuPercent),
+                MemoryUsed = usedGb, MemoryTotal = totalGb,
+                LaptopBattery = power.Percent, OnCharger = power.OnCharger, Charging = power.Charging, Watts = watts,
+                PowerMode = PowerMode(),
+                Detail = ec is null ? loadError : null,
+            };
         }
     }
 
-    /// <summary>Command 12's buffer: fan duty at byte 16 (0-255), temperature at byte 18 (°C).</summary>
-    internal static (int? Temperature, int? FanDuty) Parse(byte[] buf)
+    private static int? Round(double? v) => v is null ? null : (int)Math.Round(v.Value);
+
+    internal sealed record Fans(int? CpuTemp, int? GpuTemp, int CpuDuty, int GpuDuty, int? CpuRpm, int? GpuRpm);
+
+    /// <summary>
+    /// Command 12's buffer on this Clevo-built GIGABYTE: fan 1 (CPU) tacho period at bytes 2-3 and fan 2 (GPU) at 4-5
+    /// (rpm = 2156220 / period), CPU fan duty at 16, CPU temperature at 18, GPU fan duty at 19, GPU temperature at 21.
+    /// Checked against nvidia-smi and the fans' sound.
+    /// </summary>
+    internal static Fans? Parse(byte[] buf)
     {
-        if (buf.Length < 19) return (null, null);
-        int? temp = buf[18] is > 0 and < 120 ? buf[18] : null;
-        return (temp, (int)Math.Round(buf[16] * 100 / 255.0));
+        if (buf.Length < 22) return null;
+        int? Temp(byte b) => b is > 0 and < 120 ? b : null;
+        int? Rpm(int hi, int lo) { var period = (buf[hi] << 8) | buf[lo]; return period is 0 or >= 0xFF00 ? 0 : (int)Math.Round(2156220.0 / period); }
+        int Duty(byte b) => (int)Math.Round(b * 100 / 255.0);
+        return new Fans(Temp(buf[18]), Temp(buf[21]), Duty(buf[16]), Duty(buf[19]), Rpm(2, 3), Rpm(4, 5));
     }
+
+    private static (double? Used, double? Total) Memory()
+    {
+        var m = new MemoryStatusEx { Length = (uint)Marshal.SizeOf<MemoryStatusEx>() };
+        if (!GlobalMemoryStatusEx(ref m)) return (null, null);
+        const double Gb = 1024.0 * 1024 * 1024;
+        return (Math.Round((m.TotalPhys - m.AvailPhys) / Gb, 1), Math.Round(m.TotalPhys / Gb, 1));
+    }
+
+    private static (int? Percent, bool OnCharger, bool Charging) Power()
+    {
+        if (!GetSystemPowerStatus(out var s) || s.BatteryFlag == 128) return (null, s.ACLineStatus == 1, false); // 128: no battery
+        // How much the laptop draws, from the battery's own rate: every 15 seconds (it is a WMI question).
+        if (Environment.TickCount64 >= nextBatteryLook)
+        {
+            nextBatteryLook = Environment.TickCount64 + 15_000;
+            watts = BatteryWatts();
+        }
+        return (s.BatteryLifePercent <= 100 ? s.BatteryLifePercent : null, s.ACLineStatus == 1, (s.BatteryFlag & 8) != 0);
+    }
+
+    private static double? BatteryWatts()
+    {
+        try
+        {
+            using var search = new ManagementObjectSearcher(@"root\wmi", "SELECT DischargeRate, ChargeRate FROM BatteryStatus");
+            foreach (ManagementObject o in search.Get())
+            {
+                var discharge = Convert.ToInt64(o["DischargeRate"] ?? 0);
+                var charge = Convert.ToInt64(o["ChargeRate"] ?? 0);
+                var mw = discharge > 0 ? -discharge : charge;
+                return mw == 0 ? 0 : Math.Round(mw / 1000.0, 1); // + charging, - on battery
+            }
+        }
+        catch (ManagementException) { }
+        return null;
+    }
+
+    // ---- Windows power mode (Settings → Power → Power mode) ----
+
+    private static readonly Guid BestEfficiency = new("961cc777-2547-4f9d-8174-7d86181b8a7a");
+    private static readonly Guid BestPerformance = new("ded574b5-45a0-4f42-8737-46345c09c238");
+
+    /// <summary>efficiency | balanced | performance</summary>
+    public static string? PowerMode()
+    {
+        if (PowerGetEffectiveOverlayScheme(out var g) != 0) return null;
+        return g == BestEfficiency ? "efficiency" : g == BestPerformance ? "performance" : "balanced";
+    }
+
+    public static void SetPowerMode(string mode)
+    {
+        var g = mode switch { "efficiency" => BestEfficiency, "performance" => BestPerformance, "balanced" => Guid.Empty, _ => throw new ArgumentException(mode) };
+        if (PowerSetActiveOverlayScheme(g) != 0) throw new IOException("Windows kept its power mode");
+        if (PowerMode() != mode) throw new IOException("Windows kept its power mode");
+    }
+
+    // ---- The vendor DLL ----
 
     private static void Load()
     {
@@ -66,7 +156,7 @@ internal static unsafe class LaptopSensors
                 .Where(File.Exists)
                 .OrderByDescending(File.GetLastWriteTimeUtc)
                 .FirstOrDefault();
-            return quick ?? Directory.EnumerateFiles(repo, "InsydeDCHU.dll", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true }).FirstOrDefault();
+            return quick ?? Directory.EnumerateFiles(repo, "InsydeDCHU.dll", new System.IO.EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true }).FirstOrDefault();
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
     }
@@ -84,7 +174,17 @@ internal static unsafe class LaptopSensors
         catch { return "Laptop"; }
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MemoryStatusEx { public uint Length, MemoryLoad; public ulong TotalPhys, AvailPhys, TotalPageFile, AvailPageFile, TotalVirtual, AvailVirtual, AvailExtendedVirtual; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SystemPowerStatus { public byte ACLineStatus, BatteryFlag, BatteryLifePercent, SystemStatusFlag; public int BatteryLifeTime, BatteryFullLifeTime; }
+
     private const uint LoadWithAlteredSearchPath = 0x00000008;
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] private static extern IntPtr LoadLibraryEx(string path, IntPtr file, uint flags);
     [DllImport("kernel32.dll", CharSet = CharSet.Ansi, BestFitMapping = false)] private static extern IntPtr GetProcAddress(IntPtr lib, string name);
+    [DllImport("kernel32.dll")] private static extern bool GlobalMemoryStatusEx(ref MemoryStatusEx m);
+    [DllImport("kernel32.dll")] private static extern bool GetSystemPowerStatus(out SystemPowerStatus s);
+    [DllImport("powrprof.dll")] private static extern uint PowerGetEffectiveOverlayScheme(out Guid scheme);
+    [DllImport("powrprof.dll")] private static extern uint PowerSetActiveOverlayScheme(Guid scheme);
 }

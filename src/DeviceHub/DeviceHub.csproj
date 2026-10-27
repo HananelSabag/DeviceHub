@@ -10,7 +10,7 @@
     <AssemblyName>DeviceHub</AssemblyName>
     <RootNamespace>DeviceHub</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>0.2.0</Version>
+    <Version>0.3.0</Version>
     <Product>DeviceHub</Product>
     <Authors>Hananel Sabag</Authors>
     <Description>One small console-style app for my own mouse, headset, controller, laptop sensors and sound devices.</Description>
@@ -28,6 +28,7 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4258.31" />
+    <PackageReference Include="System.Management" Version="10.0.13" />
   </ItemGroup>
 
   <!-- The WebView2 package always references its WPF control too; this is a WinForms app, so drop it. -->

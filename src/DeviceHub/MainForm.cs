@@ -3,6 +3,7 @@ using System.Text.Json;
 using DeviceHub.Audio;
 using DeviceHub.Core;
 using DeviceHub.Devices;
+using DeviceHub.Interop;
 using DeviceHub.Lighting;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
@@ -88,6 +89,7 @@ internal sealed class MainForm : Form
         plugDebounce.Tick += (_, _) => { plugDebounce.Stop(); ReadDevices(); };
         audioDebounce.Tick += (_, _) => { audioDebounce.Stop(); PostAudio(); };
         LightingEngine.Instance.ScreenChanged += bits => { if (watchScreen) OnUiThread(() => Post("screen", Convert.ToBase64String(bits))); };
+        LightingEngine.Instance.KeysWantedChanged += on => OnUiThread(() => RawKeys.Listen(Handle, on));
 
         // A second DeviceHub started while this one is in the tray asks us to come forward.
         new Thread(() => { while (showSignal.WaitOne()) OnUiThread(ShowFromTray); }) { IsBackground = true, Name = "DeviceHub show" }.Start();
@@ -187,9 +189,17 @@ internal sealed class MainForm : Form
         }
     }
 
+    /// <summary>A key-press effect remembered from last time listens from the start, tray or not.</summary>
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        if (LightingEngine.Instance.KeysWanted) RawKeys.Listen(Handle, true);
+    }
+
     /// <summary>Plugging a USB device in or out (a dongle, the controller): read the devices again once things settle.</summary>
     protected override void WndProc(ref Message m)
     {
+        if (m.Msg == RawKeys.WmInput && RawKeys.KeyDown(m.LParam) is { } key) LightingEngine.Instance.KeyPressed(key);
         if (m.Msg == WmDeviceChange)
         {
             LightingEngine.Instance.DevicesChanged();

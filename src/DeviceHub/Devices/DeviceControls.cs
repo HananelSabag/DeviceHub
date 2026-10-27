@@ -15,6 +15,8 @@ internal sealed record ControlState
     public int? AutoOff { get; init; }
     public string? EqPreset { get; init; }
     public double[]? Eq { get; init; }
+    /// <summary>The headset's settings saved under a name ("Games", "Music"…), applied together in one press.</summary>
+    public List<HeadsetProfile> HeadsetProfiles { get; init; } = [];
     public DualSense.Lights? ControllerLights { get; init; }
     public KeyboardLighting? Lighting { get; init; }
     public OledSettings? Screen { get; init; }
@@ -35,6 +37,8 @@ internal sealed record ControlState
         File.WriteAllText(FilePath, JsonSerializer.Serialize(this, Json));
     }
 }
+
+internal sealed record HeadsetProfile(string Name, int? Sidetone, int? AutoOff, string? EqPreset, double[]? Eq);
 
 /// <summary>Every change the page can ask for, one device at a time, never while another read or write is running.</summary>
 internal static class DeviceControls
@@ -67,7 +71,7 @@ internal static class DeviceControls
             return device switch
             {
                 "mouse" => await Task.Run(() => RazerMouse.ReadSettings(hid)),
-                "headset" => new { state.Sidetone, state.AutoOff, eqPreset = state.EqPreset ?? (state.Eq is null ? null : "custom"), eq = state.Eq, presets = ArctisHeadset.Presets },
+                "headset" => new { state.Sidetone, state.AutoOff, eqPreset = state.EqPreset ?? (state.Eq is null ? null : "custom"), eq = state.Eq, presets = ArctisHeadset.Presets, profiles = state.HeadsetProfiles },
                 "controller" => new { lights = state.ControllerLights },
                 _ => null,
             };
@@ -88,6 +92,11 @@ internal static class DeviceControls
     public static async Task<object?> Apply(string device, string action, JsonElement value)
     {
         if (device == "keyboard") { ApplyKeyboard(action, value); return KeyboardSettings(); }
+        if (device == "laptop" && action == "powerMode")
+        {
+            await Task.Run(() => LaptopSensors.SetPowerMode(value.GetString() ?? ""));
+            return new { powerMode = LaptopSensors.PowerMode() };
+        }
         await DeviceReader.Gate.WaitAsync();
         try
         {
@@ -122,6 +131,24 @@ internal static class DeviceControls
                     var custom = value.EnumerateArray().Select(x => x.GetDouble()).ToArray();
                     await ArctisHeadset.SetEqualizer(hid, custom);
                     Remember(state with { EqPreset = "custom", Eq = custom });
+                    break;
+                case ("headset", "saveProfile"):
+                    // What the headset has now (as DeviceHub last set it), under a name; the same name replaces the old one.
+                    var saveAs = (value.GetString() ?? "").Trim();
+                    if (saveAs.Length is 0 or > 24) throw new ArgumentException("a name of 1-24 characters");
+                    var profile = new HeadsetProfile(saveAs, state.Sidetone, state.AutoOff, state.EqPreset, state.Eq);
+                    Remember(state with { HeadsetProfiles = [.. state.HeadsetProfiles.Where(p => p.Name != saveAs), profile] });
+                    break;
+                case ("headset", "deleteProfile"):
+                    var drop = value.GetString();
+                    Remember(state with { HeadsetProfiles = [.. state.HeadsetProfiles.Where(p => p.Name != drop)] });
+                    break;
+                case ("headset", "applyProfile"):
+                    var p = state.HeadsetProfiles.FirstOrDefault(x => x.Name == value.GetString()) ?? throw new ArgumentException("no such profile");
+                    if (p.Sidetone is { } side) await ArctisHeadset.SetSidetone(hid, side);
+                    if (p.AutoOff is { } off) await ArctisHeadset.SetAutoOff(hid, off);
+                    if (p.Eq is { } bandsOf) await ArctisHeadset.SetEqualizer(hid, bandsOf);
+                    Remember(state with { Sidetone = p.Sidetone ?? state.Sidetone, AutoOff = p.AutoOff ?? state.AutoOff, EqPreset = p.Eq is null ? state.EqPreset : p.EqPreset, Eq = p.Eq ?? state.Eq });
                     break;
 
                 case ("controller", "lights"):

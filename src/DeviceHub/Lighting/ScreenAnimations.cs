@@ -4,8 +4,8 @@ namespace DeviceHub.Lighting;
 
 /// <summary>
 /// Moving pictures for the keyboard's 128 × 40 screen, drawn 20 times a second. All of them are drawn here,
-/// from scratch: warp-speed stars, falling code, an energy blast, bars that follow the sound, and a ball heading
-/// for the goal. Each keeps its own state between frames.
+/// from scratch: warp-speed stars, falling code, an energy blast, bars that follow the sound, a ball heading
+/// for the goal, a power-up, and a show that plays them all with transitions. Each keeps its own state between frames.
 /// </summary>
 internal abstract class ScreenAnimation
 {
@@ -19,11 +19,13 @@ internal abstract class ScreenAnimation
         "energy" => new Energy(),
         "sound" => new SoundBars(),
         "goal" => new Goal(),
+        "power" => new PowerUp(),
+        "show" => new Show(),
         _ => null,
     };
 
     /// <summary>The next frame. t: seconds since the animation started; level: the sound level 0-1.</summary>
-    public byte[] Frame(double t, float level)
+    public virtual byte[] Frame(double t, float level)
     {
         var dt = last < 0 ? 0.05 : Math.Clamp(t - last, 0, 0.2);
         last = t;
@@ -186,6 +188,129 @@ internal abstract class ScreenAnimation
                 var half = Math.Max(1, (int)Math.Round(Math.Sqrt(v) * 19));
                 g.FillRectangle(Brushes.White, i * 3 + 1, 20 - half, 2, half * 2);
             }
+        }
+    }
+
+    /// <summary>
+    /// A power-up: an aura of rising sparks grows round a point, the screen starts to shake, a power reading races
+    /// up past 9000, then a flash and a shockwave; the aura stays, burning, before it all starts again.
+    /// </summary>
+    private sealed class PowerUp : ScreenAnimation
+    {
+        private const double Cycle = 7.0, Charge = 3.6;
+        private readonly List<(double X, double Y, double Vy, double Life)> sparks = [];
+
+        protected override void Draw(Graphics g, double t, double dt, float level)
+        {
+            var p = t % Cycle;
+            var power = p < Charge ? Math.Pow(p / Charge, 2.2) : 1;
+            // The shake: nothing at first, a pixel or two as the power builds.
+            var shake = p is > 1.6 and < 4.2 ? Rng.Next(-1, 2) * (p < Charge ? 1 : 2) : 0;
+            g.TranslateTransform(shake, Rng.Next(-1, 2) * Math.Abs(shake) / 2f);
+
+            // The aura: sparks rise from a growing base and flicker out.
+            var width = 6 + power * 34;
+            var spawn = (int)(3 + power * 14);
+            for (var i = 0; i < spawn; i++)
+                sparks.Add((64 + (Rng.NextDouble() - 0.5) * width * 2, 39, -(18 + Rng.NextDouble() * 40 * (0.4 + power)), 0.5 + Rng.NextDouble() * 0.7));
+            for (var i = sparks.Count - 1; i >= 0; i--)
+            {
+                var (x, y, vy, life) = sparks[i];
+                life -= dt;
+                if (life <= 0 || y < -2) { sparks.RemoveAt(i); continue; }
+                // Flames lean in towards the middle as they rise.
+                x += (64 - x) * dt * 0.9 + (Rng.NextDouble() - 0.5) * 1.5;
+                y += vy * dt;
+                sparks[i] = (x, y, vy, life);
+                Dot(g, x, y);
+                if (life > 0.4) Dot(g, x, y + 1);
+            }
+            // A bright core.
+            var core = (float)(3 + power * 6 + Math.Sin(t * 25) * 0.8);
+            g.FillEllipse(Brushes.White, 64 - core, 33 - core * 0.6f, core * 2, core * 1.2f);
+            if (p > 1.2 && Rng.NextDouble() < 0.25 + power * 0.4) Crackle(g, 64 + Rng.Next(-30, 30), Rng.Next(4, 30));
+
+            g.ResetTransform();
+            // The reading races up, then holds past 9000.
+            var reading = p < Charge ? (int)(9001 * power) : 9001;
+            using var font = new Font("Bahnschrift", 11, FontStyle.Bold, GraphicsUnit.Pixel);
+            g.FillRectangle(Brushes.Black, 0, 0, 44, 13);
+            g.DrawString(reading.ToString(), font, Brushes.White, 1, 0);
+            if (p is >= Charge and < Charge + 0.18) g.FillRectangle(Brushes.White, 0, 0, 128, 40); // the flash
+            if (p is >= Charge + 0.18 and < Charge + 1.2)
+            {
+                var r = (float)((p - Charge) * 120);
+                g.DrawEllipse(Pens.White, 64 - r, 30 - r * 0.45f, r * 2, r * 0.9f);
+            }
+            if (p >= Charge + 0.3 && (int)(t * 4) % 2 == 0) g.DrawString("!!", font, Brushes.White, 46, 0);
+        }
+
+        private void Crackle(Graphics g, float x, float y)
+        {
+            for (var i = 0; i < 3; i++)
+            {
+                float nx = x + Rng.Next(-4, 5), ny = y + Rng.Next(2, 5);
+                g.DrawLine(Pens.White, x, y, nx, ny);
+                (x, y) = (nx, ny);
+            }
+        }
+    }
+
+    /// <summary>
+    /// The show: every animation in turn, nine seconds each, joined by a different transition every time
+    /// (a wipe, a dissolve, an iris, blinds, a slide).
+    /// </summary>
+    internal sealed class Show : ScreenAnimation
+    {
+        private static readonly string[] Acts = ["stars", "energy", "matrix", "goal", "power", "sound"];
+        private const double Act = 9, Blend = 0.9;
+        private ScreenAnimation? current, next;
+        private int index = -1;
+
+        public override byte[] Frame(double t, float level)
+        {
+            var act = (int)(t / Act);
+            var within = t - act * Act;
+            if (act != index)
+            {
+                current = next ?? For(Acts[act % Acts.Length]);
+                next = null;
+                index = act;
+            }
+            var a = current!.Frame(t, level);
+            if (within < Act - Blend) return a;
+            next ??= For(Acts[(act + 1) % Acts.Length]);
+            var b = next!.Frame(t, level);
+            return Transition(a, b, (within - (Act - Blend)) / Blend, act % 5);
+        }
+
+        protected override void Draw(Graphics g, double t, double dt, float level) { }
+
+        /// <summary>From picture a to picture b, p of the way (0-1), one of five ways.</summary>
+        internal static byte[] Transition(byte[] a, byte[] b, double p, int kind)
+        {
+            var o = new byte[640];
+            var shift = (int)Math.Round(p * 128);
+            for (var y = 0; y < 40; y++)
+                for (var x = 0; x < 128; x++)
+                {
+                    bool fromB;
+                    var (sx, src) = (x, a);
+                    switch (kind)
+                    {
+                        case 0: fromB = x < p * 128; break;                                         // wipe
+                        case 1: fromB = (unchecked((uint)(x * 73 + y * 151) * 2654435761u) >> 24) / 256.0 < p; break; // dissolve
+                        case 2: fromB = Math.Sqrt((x - 64) * (x - 64) + (y - 20) * (y - 20) * 4) < p * 76; break; // iris (76: the far corners)
+                        case 3: fromB = x % 16 < p * 16; break;                                     // blinds
+                        default:                                                                    // slide
+                            fromB = x >= 128 - shift;
+                            sx = fromB ? x - (128 - shift) : x + shift;
+                            break;
+                    }
+                    if (fromB) src = b;
+                    if ((src[y * 16 + sx / 8] & (0x80 >> (sx % 8))) != 0) o[y * 16 + x / 8] |= (byte)(0x80 >> (x % 8));
+                }
+            return o;
         }
     }
 

@@ -9,7 +9,7 @@ namespace DeviceHub.Lighting;
 internal sealed record KeyboardLighting
 {
     public bool Enabled { get; init; }
-    /// <summary>static | breathing | spectrum | wave | gradient | music</summary>
+    /// <summary>static | breathing | spectrum | wave | gradient | music | reactive | ripple</summary>
     public string Effect { get; init; } = "static";
     public string Main { get; init; } = "#FF6A1A";
     /// <summary>W A S D and the arrows in their own colour (static and breathing); null for none.</summary>
@@ -46,10 +46,22 @@ internal readonly record struct Rgb(byte R, byte G, byte B)
 internal static class KeyboardEffects
 {
     /// <summary>Effects that change over time and need frames; the others are sent once.</summary>
-    public static bool Animated(KeyboardLighting l) => l.Enabled && l.Effect is "breathing" or "spectrum" or "wave" or "music";
+    public static bool Animated(KeyboardLighting l) => l.Enabled && l.Effect is "breathing" or "spectrum" or "wave" or "music" or "reactive" or "ripple";
+
+    /// <summary>Effects that answer key presses (and so need to know which keys are pressed).</summary>
+    public static bool WantsKeys(KeyboardLighting l) => l.Enabled && l.Effect is "reactive" or "ripple";
+
+    /// <summary>A key going down at a moment (seconds, on the same clock as t).</summary>
+    public readonly record struct Press(byte Code, double T);
+
+    /// <summary>How long a press shows: 0.5 s fast … 1.8 s slow.</summary>
+    public static double Fade(KeyboardLighting l) => 1.95 - Math.Clamp(l.Speed, 1, 10) * 0.145;
+
+    private static readonly Dictionary<byte, (double X, double Y)> centers =
+        KeyboardLayout.Keys.ToDictionary(k => k.Code, k => (k.X + k.W / 2, k.Y + k.H / 2));
 
     /// <summary>A colour for every key at a moment in time (seconds), brightness applied. level: the sound, 0-1 (music).</summary>
-    public static Dictionary<byte, Rgb> Frame(KeyboardLighting l, double t, float level = 0)
+    public static Dictionary<byte, Rgb> Frame(KeyboardLighting l, double t, float level = 0, IReadOnlyList<Press>? presses = null)
     {
         var main = Rgb.Parse(l.Main);
         var accent = l.Accent is null ? (Rgb?)null : Rgb.Parse(l.Accent);
@@ -70,10 +82,44 @@ internal static class KeyboardEffects
                 "gradient" => Rgb.Lerp(main, second, x),
                 // The keys follow the sound: dim in silence, full on every beat; the accent keys stay lit.
                 "music" => accent is not null && KeyboardLayout.Accent.Contains(k.Code) ? own : own.Scale(0.08 + 0.92 * Math.Min(1, level * 1.4)),
+                // Key presses, over a background in the second colour: the key itself, or a ring spreading from it.
+                "reactive" => Rgb.Lerp(second.Scale(0.35), main, Reactive(k.Code, t, presses, Fade(l))),
+                "ripple" => Rgb.Lerp(second.Scale(0.35), main, Ripple(k, t, presses, Fade(l), speed)),
                 _ => own,
             };
             colors[k.Code] = c.Scale(bright);
         }
         return colors;
+    }
+
+    /// <summary>1 the moment the key goes down, fading to 0.</summary>
+    private static double Reactive(byte code, double t, IReadOnlyList<Press>? presses, double fade)
+    {
+        var v = 0.0;
+        if (presses is null) return v;
+        foreach (var p in presses)
+            if (p.Code == code && t >= p.T) v = Math.Max(v, 1 - (t - p.T) / fade);
+        return Math.Clamp(v, 0, 1);
+    }
+
+    /// <summary>A ring about one key wide, spreading from the pressed key and fading as it goes.</summary>
+    private static double Ripple(KeyboardLayout.Key k, double t, IReadOnlyList<Press>? presses, double fade, int speed)
+    {
+        var v = 0.0;
+        if (presses is null) return v;
+        var (kx, ky) = (k.X + k.W / 2, k.Y + k.H / 2);
+        foreach (var p in presses)
+        {
+            if (!centers.TryGetValue(p.Code, out var c) || t < p.T) continue;
+            var age = t - p.T;
+            var life = fade * 1.6;
+            if (age > life) continue;
+            var radius = age * (6 + speed * 1.8);
+            var distance = Math.Sqrt((kx - c.X) * (kx - c.X) + (ky - c.Y) * (ky - c.Y) * 1.3);
+            var ring = 1 - Math.Abs(distance - radius) / 1.3;
+            var hit = Math.Max(ring, p.Code == k.Code ? 1 - age / fade : 0);
+            v = Math.Max(v, hit * (1 - age / life));
+        }
+        return Math.Clamp(v, 0, 1);
     }
 }

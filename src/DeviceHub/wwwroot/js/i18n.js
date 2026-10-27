@@ -47,7 +47,7 @@ const STRINGS = {
     'c.bt': 'השלט מחובר בבלוטות\'', 'c.bt.sub': 'כדי לשנות אורות חבר אותו בכבל USB.',
 
     'l.temp': 'טמפרטורה', 'l.fan': 'מאוורר', 'l.history': 'הדקות האחרונות', 'l.now': 'עכשיו', 'l.ago': 'לפני {n} דק\'',
-    'l.note': 'קריאה בלבד. השליטה במאווררים נשארת ב-Control Center של היצרן.',
+    'l.note': 'הכל כאן קריאה, חוץ ממצב צריכת החשמל של Windows. השליטה במאווררים נשארת ב-Control Center של היצרן.',
 
     's.title': 'צליל', 's.sub': 'לחיצה על מכשיר מעבירה אליו את הצליל', 's.out': 'יציאת שמע', 's.in': 'מיקרופון',
     's.now': 'פעיל', 's.calls': 'שיחות', 's.away': 'לא מחובר', 's.none': 'לא נמצאו מכשירים.',
@@ -71,6 +71,20 @@ const STRINGS = {
     'set.background': 'ברקע', 'set.tray': 'להישאר במגש כשסוגרים', 'set.tray.sub': 'כך האפקטים והמסך במקלדת ממשיכים. יציאה מלאה מהתפריט של האייקון במגש.',
     'set.startup': 'הפעלה עם Windows', 'set.startup.sub': 'נפתח בשקט במגש, בלי חלון.',
     'set.alerts': 'התראת סוללה חלשה', 'set.alerts.sub': 'הודעה כשהעכבר, האוזניות או השלט יורדים מתחת ל-15%.',
+
+    'fx.reactive': 'לחיצה', 'fx.reactive.sub': 'המקש נדלק כשלוחצים עליו', 'fx.ripple': 'אדווה', 'fx.ripple.sub': 'גל שמתפשט מהמקש',
+    'k.press': 'צבע הלחיצה', 'k.background': 'צבע הרקע',
+    'scr.system': 'מחשב', 'scr.system.sub': 'CPU ו-GPU: חום ועומס', 'scr.show': 'מופע', 'scr.show.sub': 'כל האנימציות, עם מעברים',
+    'scr.power': 'עלייה בכוח', 'scr.power.sub': 'הילה, מונה כוח, פיצוץ',
+    'h.profiles': 'פרופילים', 'h.profiles.apply': 'החל פרופיל', 'h.profiles.sub': 'אקולייזר, שמיעה עצמית וכיבוי אוטומטי בלחיצה אחת.',
+    'h.profile.none': 'עוד אין פרופילים. שמור את ההגדרות הנוכחיות כאן למטה.', 'h.profile.save': 'שמור את ההגדרות הנוכחיות',
+    'h.profile.save.sub': 'בשם שתבחר, למשל "משחקים" או "מוזיקה". אותו שם מחליף את הקודם.', 'h.profile.placeholder': 'שם הפרופיל',
+    'h.profile.saveBtn': 'שמור', 'h.profile.delete': 'מחק את הפרופיל', 'h.profile.applied': 'הפרופיל {name} הוחל',
+    'l.cpu': 'מעבד', 'l.gpu': 'כרטיס מסך', 'l.memory': 'זיכרון', 'l.battery': 'סוללת הלפטופ', 'l.load': 'עומס {n}%', 'l.speed': 'מהירות {n}%',
+    'l.of': 'מתוך {n} GB', 'l.noBattery': 'אין סוללה', 'l.charging': 'בטעינה', 'l.onCharger': 'מחובר לחשמל', 'l.onBattery': 'על סוללה, {w}W',
+    'l.fans': 'מאווררים', 'l.fanCpu': 'המעבד', 'l.fanGpu': 'כרטיס המסך',
+    'l.mode': 'מצב צריכת חשמל', 'l.mode.sub': 'ההגדרה של Windows: חיסכון, מאוזן או ביצועים מרביים.',
+    'l.mode.efficiency': 'חיסכון', 'l.mode.balanced': 'מאוזן', 'l.mode.performance': 'ביצועים',
 
     'saved': 'נשמר', 'error': 'לא נשמר: {msg}',
   },
@@ -120,7 +134,7 @@ const STRINGS = {
     'c.bt': 'The controller is on Bluetooth', 'c.bt.sub': 'Connect it with a USB cable to change its lights.',
 
     'l.temp': 'Temperature', 'l.fan': 'Fan', 'l.history': 'The last few minutes', 'l.now': 'Now', 'l.ago': '{n} min ago',
-    'l.note': 'Read only. Fan control stays in the maker\'s Control Center.',
+    'l.note': 'Everything here is read only, except Windows\' power mode. Fan control stays in the maker\'s Control Center.',
 
     's.title': 'Sound', 's.sub': 'Press a device to send the sound there', 's.out': 'Output', 's.in': 'Microphone',
     's.now': 'In use', 's.calls': 'Calls', 's.away': 'Not connected', 's.none': 'No devices found.',
@@ -144,6 +158,20 @@ const STRINGS = {
     'set.background': 'In the background', 'set.tray': 'Stay in the tray when closed', 'set.tray.sub': 'So the keyboard\'s effects and screen keep going. Exit fully from the tray icon\'s menu.',
     'set.startup': 'Start with Windows', 'set.startup.sub': 'Starts quietly in the tray, without a window.',
     'set.alerts': 'Low battery alerts', 'set.alerts.sub': 'A note when the mouse, headset or controller drops below 15%.',
+
+    'fx.reactive': 'Key press', 'fx.reactive.sub': 'A key lights up as you press it', 'fx.ripple': 'Ripple', 'fx.ripple.sub': 'A wave spreading from the key',
+    'k.press': 'Press colour', 'k.background': 'Background',
+    'scr.system': 'System', 'scr.system.sub': 'CPU and GPU: heat and load', 'scr.show': 'Show', 'scr.show.sub': 'Every animation, with transitions',
+    'scr.power': 'Power up', 'scr.power.sub': 'Aura, power reading, blast',
+    'h.profiles': 'Profiles', 'h.profiles.apply': 'Apply a profile', 'h.profiles.sub': 'Equalizer, sidetone and auto-off in one press.',
+    'h.profile.none': 'No profiles yet. Save the current settings below.', 'h.profile.save': 'Save the current settings',
+    'h.profile.save.sub': 'Under a name you choose, like "Games" or "Music". The same name replaces the old one.', 'h.profile.placeholder': 'Profile name',
+    'h.profile.saveBtn': 'Save', 'h.profile.delete': 'Delete the profile', 'h.profile.applied': 'Profile {name} applied',
+    'l.cpu': 'CPU', 'l.gpu': 'GPU', 'l.memory': 'Memory', 'l.battery': 'Laptop battery', 'l.load': 'Load {n}%', 'l.speed': 'Speed {n}%',
+    'l.of': 'of {n} GB', 'l.noBattery': 'No battery', 'l.charging': 'Charging', 'l.onCharger': 'On the charger', 'l.onBattery': 'On battery, {w} W',
+    'l.fans': 'Fans', 'l.fanCpu': 'CPU', 'l.fanGpu': 'GPU',
+    'l.mode': 'Power mode', 'l.mode.sub': 'Windows\' setting: power saving, balanced or best performance.',
+    'l.mode.efficiency': 'Saving', 'l.mode.balanced': 'Balanced', 'l.mode.performance': 'Performance',
 
     'saved': 'Saved', 'error': 'Not saved: {msg}',
   },

@@ -22,10 +22,10 @@ keyboard's screen), and starts with Windows only if you ask.
 | Device | Reads | Changes |
 |---|---|---|
 | **Razer Basilisk X HyperSpeed** (1532:0083) | Battery, polling rate, DPI, DPI stages, sleep time, low-battery warning | DPI stages and the active one, polling rate (125/500/1000 Hz), sleep time (1-15 min), low-battery warning (5-25 %). Every change is read back from the mouse. |
-| **SteelSeries Arctis 7+** (1038:220E) | Battery, charging, ChatMix | Sidetone (4 levels), auto-off (never - 90 min), 10-band equalizer and SteelSeries' four presets. Saved in the headset. |
-| **SteelSeries Apex 5** (1038:161C) | Connected | One switch hands the lighting to DeviceHub (off: the keyboard's own lighting). Effects: static with a W A S D / arrows accent, breathing, rainbow wave, spectrum, gradient, and music (keys pulse with what the PC plays); speed and brightness. **The OLED screen:** clock, batteries, now playing (Spotify, a browser…), a rotation of those, your own text, your own picture or animated GIF, and five animations drawn for DeviceHub: warp speed, matrix, an energy blast, music bars and a goal. |
+| **SteelSeries Arctis 7+** (1038:220E) | Battery, charging, ChatMix | Sidetone (4 levels), auto-off (never - 90 min), 10-band equalizer and SteelSeries' four presets, and your own profiles ("Games", "Music"…) that apply all three in one press. Saved in the headset. |
+| **SteelSeries Apex 5** (1038:161C) | Connected | One switch hands the lighting to DeviceHub (off: the keyboard's own lighting). Effects: static with a W A S D / arrows accent, breathing, rainbow wave, spectrum, gradient, music (keys pulse with what the PC plays), key press (the key lights and fades) and ripple (a ring spreads from the key); speed and brightness. **The OLED screen:** clock, batteries, CPU / GPU, now playing (Spotify, a browser…), a rotation of those, your own text, your own picture or animated GIF, and animations drawn for DeviceHub: warp speed, matrix, an energy blast, a power-up, music bars and a goal, plus a show that plays them all with transitions (wipe, dissolve, iris, blinds, slide). |
 | **DualSense Edge** (054C:0DF2, and DualSense) | Battery, charging, USB or Bluetooth | Lightbar colour and brightness, player lights, mute-button light (USB). |
-| **Laptop** (Clevo-built GIGABYTE G5 KD) | Temperature, fan duty, the last 5 minutes of temperature | Nothing on purpose: fan control stays in the maker's Control Center. |
+| **Laptop** (Clevo-built GIGABYTE G5 KD) | CPU and GPU temperature and load (as Task Manager counts it), both fans' duty and real RPM, memory, the laptop's battery and its draw, Windows' power mode, the last 5 minutes of both temperatures | Windows' power mode (saving, balanced, performance). Fan control stays in the maker's Control Center on purpose. |
 | **Sound** | Every output and microphone, with the real device names (the Logitech speakers behind the UGREEN-90748 receiver, the monitor, the headset, the controller) | One press makes a device the default, for calls too if you want. |
 
 | Mouse | Keyboard | Controller |
@@ -72,7 +72,12 @@ Each protocol comes from an open-source project that documented it, re-implement
   music effects follow the same peak meter as Windows' volume mixer (only the level is read, nothing is recorded).
 - **DualSense** — the battery is in every USB input report (byte 53; 54 in Bluetooth's full report). Lights use USB output report
   `02` with only the light fields flagged valid, laid out as in Linux's `hid-playstation`.
-- **Laptop** — `GetDCHU_Data_Buffer(12)`: fan duty at byte 16, temperature at byte 18.
+- **Laptop** — `GetDCHU_Data_Buffer(12)`: fan tacho periods at bytes 2-3 (CPU) and 4-5 (GPU), rpm = 2156220 / period;
+  duty at 16 (CPU) and 19 (GPU); temperature at 18 (CPU) and 21 (GPU), checked against `nvidia-smi`. Load from the
+  performance counters Task Manager uses (`% Processor Utility`, `GPU Engine … engtype_3D`); battery draw from WMI `BatteryStatus`;
+  power mode through `PowerSetActiveOverlayScheme`.
+- **Key presses** — Windows' Raw Input with `RIDEV_INPUTSINK`, registered only while a key-press effect is on: a copy of each
+  key-down, nothing intercepted or stored, and only presses from the Apex itself count.
 - **Sound** — `IMMDeviceEnumerator` to list, `IMMNotificationClient` to hear about changes (nothing is polled), `IPolicyConfig` to set the default.
 
 ## Run it
