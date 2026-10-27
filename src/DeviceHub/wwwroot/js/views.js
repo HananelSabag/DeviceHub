@@ -2,6 +2,8 @@
 
 import { t, locale } from './i18n.js';
 import { esc, icon, hex } from './ui.js';
+import { art } from './art.js';
+import { keyboardPreview, effectSwatch } from './effects.js';
 
 export const DEVICES = ['mouse', 'headset', 'keyboard', 'controller', 'laptop'];
 export const BRAND = { overview: 'hub', mouse: 'razer', headset: 'steel', keyboard: 'steel', controller: 'ps', laptop: 'heat', sound: 'sound', settings: 'hub' };
@@ -89,23 +91,30 @@ export function railHtml(app) {
 
 export function overviewHtml(app) {
   const time = app.readAt?.toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit' });
-  const rack = DEVICES.map(id => {
+  // The desk: every device drawn, with the one number that matters under it.
+  const desk = DEVICES.map(id => {
     const d = app.devices[id];
     const s = summary(id, d);
-    const line = s.num == null ? (s.note ?? s.state) : s.facts.join('   ');
-    const end = s.num != null ? `<span class="rr-num">${s.num}<small>${s.unit}</small></span>` : `<span class="rr-num text">${esc(s.state ?? '')}</span>`;
-    const bar = s.pct != null ? `<span class="meter"><i style="--v:${s.pct}%"></i></span>` : '<span></span>';
-    return `<button class="rack-row ${s.cls}" data-page="${id}" data-brand="${BRAND[id]}">
-      <span class="rr-ic">${icon(ICON[id])}</span>
-      <span class="rr-name"><b>${bdi(shortName(id, d))}</b><small>${bdi(line)}</small></span>
-      ${bar}${end}</button>`;
+    const value = s.num != null
+      ? `<span class="desk-num">${s.num}<small>${s.unit}</small></span>${s.pct != null ? `<span class="meter"><i style="--v:${s.pct}%"></i></span>` : ''}`
+      : `<span class="desk-state">${esc(s.state ?? '')}</span>`;
+    return `<button class="desk-card ${s.cls}" data-page="${id}" data-brand="${BRAND[id]}">
+      <span class="desk-art">${art(id)}</span>
+      <span class="desk-name"><b>${bdi(shortName(id, d))}</b><small>${esc(t(`kind.${id}`))}</small></span>
+      <span class="desk-value">${value}</span>${s.chip ? `<span class="chip desk-chip">${esc(s.chip)}</span>` : ''}</button>`;
   }).join('');
+  const screenMode = app.deviceSettings.keyboard?.screen?.mode ?? 'off';
   return `<header class="page-head"><h1>${esc(t('nav.overview'))}</h1>
       <p class="sub">${esc(app.reading && !time ? t('ov.reading') : time ? t('ov.sub', { time }) : '')}</p>
       ${refreshButton(app)}</header>
+    <div class="desk">${desk}</div>
     <div class="overview">
-      <section class="panel rack"><h2>${esc(t('ov.power'))}</h2>${rack}</section>
       <section class="panel quick" data-brand="sound"><h2>${esc(t('ov.sound'))}</h2>${soundLists(app, true)}</section>
+      <section class="panel screen-panel" data-brand="steel">
+        <h2>${esc(t('ov.screen'))}</h2>
+        <div class="oled"><canvas class="oled-canvas" width="128" height="40"></canvas>${screenMode === 'off' ? `<span class="oled-off">${esc(t('scr.offNote'))}</span>` : ''}</div>
+        <button class="btn" data-page="keyboard">${icon('keyboard')}${esc(t('ov.screenEdit'))}</button>
+      </section>
     </div>`;
 }
 
@@ -154,6 +163,11 @@ export function settingsHtml(app) {
           <div class="seg" role="radiogroup"><button role="radio" data-setting="language" data-v="he" aria-checked="${lang === 'he'}">עברית</button><button role="radio" data-setting="language" data-v="en" aria-checked="${lang === 'en'}">English</button></div></div>
         <div class="row"><div class="row-text"><b>${esc(t('set.calls'))}</b><small>${esc(t('set.calls.sub'))}</small></div>${toggle('switchCalls', app.settings.switchCalls)}</div>
       </section>
+      <section class="group"><h2>${esc(t('set.background'))}</h2>
+        <div class="row"><div class="row-text"><b>${esc(t('set.tray'))}</b><small>${esc(t('set.tray.sub'))}</small></div>${toggle('keepInTray', app.settings.keepInTray)}</div>
+        <div class="row"><div class="row-text"><b>${esc(t('set.startup'))}</b><small>${esc(t('set.startup.sub'))}</small></div>${toggle('startWithWindows', app.startWithWindows)}</div>
+        <div class="row"><div class="row-text"><b>${esc(t('set.alerts'))}</b><small>${esc(t('set.alerts.sub'))}</small></div>${toggle('batteryAlerts', app.settings.batteryAlerts)}</div>
+      </section>
       <p class="note">${esc(t('set.about', { v: app.version }))}</p>
     </div>`;
 }
@@ -170,7 +184,7 @@ export function deviceHeadHtml(app, id) {
     ? `<div class="dh-meter ${s.cls}"><span class="dh-big">${s.num}<small>${s.unit}</small></span>${s.pct != null ? `<span class="meter"><i style="--v:${s.pct}%"></i></span>` : ''}${s.chip ? `<span class="chip">${esc(s.chip)}</span>` : ''}</div>`
     : `<div class="dh-meter"><span class="dh-state">${esc(s.state ?? '')}</span></div>`;
   return `<header class="dev-head ${s.cls}" id="dev-head" data-brand="${BRAND[id]}">
-    <span class="dh-ic">${icon(ICON[id])}</span>
+    <span class="dh-art">${art(id)}</span>
     <div class="dh-title"><h1>${bdi(shortName(id, d))}</h1><p>${facts.map(f => `<span>${bdi(f)}</span>`).join('')}</p></div>
     ${meter}</header>`;
 }
@@ -255,51 +269,52 @@ export function eqCurve(bands) {
     <polyline class="line" points="${line}"/></svg>`;
 }
 
+export const EFFECTS = ['static', 'breathing', 'wave', 'spectrum', 'gradient', 'music'];
+export const SCREENS = ['off', 'clock', 'devices', 'music', 'cycle', 'text', 'image', 'stars', 'matrix', 'energy', 'sound', 'goal'];
+
+/** Colour swatches with a custom picker at the end; withNone adds "no colour" first. */
+const swatches = (ctl, current, withNone = false) => `<div class="swatches" role="radiogroup" data-swatch="${ctl}">
+    ${withNone ? `<button class="swatch none" role="radio" data-v="" aria-checked="${!current}" aria-label="${esc(t('c.off'))}"></button>` : ''}
+    ${SWATCHES.map(c => `<button class="swatch" role="radio" style="--c:${c}" data-v="${c}" aria-checked="${current?.toUpperCase() === c}" aria-label="${c}"></button>`).join('')}
+    <label class="swatch-custom" title="#"><input type="color" value="${current ?? '#ffffff'}" data-swatch-custom="${ctl}"></label></div>`;
+
 function keyboardBody(app) {
   const d = app.devices.keyboard;
   if (!d || d.state === 'missing') return empty(t('st.missing'), t('note.missing.keyboard'));
-  const k = app.drafts.keyboard;
-  const own = k.mode === 'own';
-  const swatches = (ctl, current, withNone) => `<div class="swatches" role="radiogroup" data-swatch="${ctl}">
-      ${withNone ? `<button class="swatch none" role="radio" data-v="" aria-checked="${!current}" aria-label="${esc(t('c.off'))}"></button>` : ''}
-      ${SWATCHES.map(c => `<button class="swatch" role="radio" style="--c:${c}" data-v="${c}" aria-checked="${current?.toUpperCase() === c}" aria-label="${c}"></button>`).join('')}
-      <label class="swatch-custom" title="#"><input type="color" value="${current ?? '#ffffff'}" data-swatch-custom="${ctl}"></label></div>`;
-  return `<section class="group ${own ? 'kb-off' : ''}"><h2>${esc(t('k.lighting'))}</h2>
-      ${row(t('k.mode'), t('k.mode.sub'), seg('keyboard.mode', [['own', t('k.own')], ['color', t('k.color')]], k.mode))}
-      ${own ? '' : row(t('k.main'), '', swatches('main', k.main, false))}
-      ${own ? '' : row(t('k.accent'), t('k.accent.sub'), swatches('accent', k.accent, true))}
-      ${own ? '' : row(t('k.brightness'), '', `<div class="slider-line"><input type="range" min="5" max="100" step="5" value="${k.brightness}" data-kb-brightness><output>${k.brightness}%</output></div>`)}
-      <div class="row stack">${keyboardSvg(own ? null : k)}</div>
+  const s = app.deviceSettings.keyboard;
+  if (!s) return empty(t('st.reading'), '');
+  const l = app.drafts.keyboard.lighting;
+  const scr = app.drafts.keyboard.screen;
+  const fx = l.effect;
+  const colours = !l.enabled || fx === 'spectrum' || fx === 'wave' ? ''
+    : fx === 'gradient'
+      ? row(t('k.from'), '', swatches('main', l.main)) + row(t('k.to'), '', swatches('second', l.second))
+      : row(t('k.main'), '', swatches('main', l.main)) + row(t('k.accent'), t('k.accent.sub'), swatches('accent', l.accent, true));
+  const slider = (key, label, min, max, value, unit) => row(label, '', `<div class="slider-line"><input type="range" min="${min}" max="${max}" step="1" value="${value}" data-kb="${key}"><output>${value}${unit}</output></div>`);
+  const lighting = `<section class="group"><h2>${esc(t('k.lighting'))}</h2>
+      ${row(t('k.control'), l.enabled ? t('k.control.on') : t('k.control.off'), `<button class="toggle" role="switch" aria-checked="${l.enabled}" data-kb-enabled></button>`)}
+      ${l.enabled ? `<div class="row stack"><div class="cards" role="radiogroup">${EFFECTS.map(e => `<button class="card-pick" role="radio" data-fx="${e}" aria-checked="${fx === e}">
+          <span class="fx-swatch" style="background:${effectSwatch(e, l)}"></span><b>${esc(t(`fx.${e}`))}</b><small>${esc(t(`fx.${e}.sub`))}</small></button>`).join('')}</div></div>` : ''}
+      ${colours}
+      ${l.enabled && ['breathing', 'spectrum', 'wave'].includes(fx) ? slider('speed', t('k.speed'), 1, 10, l.speed, '') : ''}
+      ${l.enabled ? slider('brightness', t('k.brightness'), 5, 100, l.brightness, '%') : ''}
+      <div class="row stack kb-wrap ${l.enabled ? '' : 'kb-off'}">${keyboardPreview(s.layout, l)}${l.enabled ? '' : `<span class="kb-off-note">${esc(t('k.ownNote'))}</span>`}</div>
+    </section>`;
+
+  const option = scr.mode === 'text'
+    ? row(t('scr.text'), t('scr.text.sub'), `<div class="text-line"><input class="text-input" type="text" maxlength="60" value="${esc(scr.text)}" data-screen-text dir="auto"><button class="btn primary" data-screen-text-save>${esc(t('scr.show'))}</button></div>`)
+    : scr.mode === 'image'
+      ? row(t('scr.picture'), t('scr.picture.sub'), `<label class="btn primary">${esc(t(s.hasPicture ? 'scr.pictureChange' : 'scr.pictureChoose'))}<input type="file" accept="image/png,image/jpeg,image/gif,image/bmp,image/webp" hidden data-screen-file></label>`)
+      : '';
+  const screen = `<section class="group" id="screen-group"><h2>${esc(t('scr.title'))}</h2>
+      <div class="row stack"><div class="oled big"><canvas class="oled-canvas" width="128" height="40"></canvas>${scr.mode === 'off' ? `<span class="oled-off">${esc(t('scr.offNote'))}</span>` : ''}</div></div>
+      <div class="row stack"><div class="cards screens" role="radiogroup">${SCREENS.map(m => `<button class="card-pick" role="radio" data-screen="${m}" aria-checked="${scr.mode === m}">
+          <b>${esc(t(`scr.${m}`))}</b><small>${esc(t(`scr.${m}.sub`))}</small></button>`).join('')}</div></div>
+      ${option}
     </section>
     <p class="note">${esc(t('k.note'))}</p>`;
+  return lighting + screen;
 }
-
-/** A full-size keyboard drawn in key units; W A S D and the arrows marked for the accent colour. */
-export function keyboardSvg(k) {
-  const U = 30, G = 3;
-  const dim = c => c ? scaleHex(c, k.brightness) : '#2D323C';
-  const main = dim(k?.main), accent = k?.accent ? dim(k.accent) : main;
-  const rects = [];
-  const draw = (y, spec, x = 0) => {
-    for (const token of spec.split(' ')) {
-      if (token.startsWith('g')) { x += parseFloat(token.slice(1)); continue; }
-      const acc = token.endsWith('*');
-      const [w, h = 1] = token.replace('*', '').split('x').map(parseFloat);
-      rects.push(`<rect x="${x * U + G / 2}" y="${y * U + G / 2}" width="${w * U - G}" height="${h * U - G}" fill="${acc ? accent : main}"/>`);
-      x += w;
-    }
-  };
-  draw(0, '1 g1 1 1 1 1 g.5 1 1 1 1 g.5 1 1 1 1');
-  draw(1.5, '1 1 1 1 1 1 1 1 1 1 1 1 1 2');
-  draw(2.5, '1.5 1 1* 1 1 1 1 1 1 1 1 1 1 1.5');
-  draw(3.5, '1.75 1* 1* 1* 1 1 1 1 1 1 1 1 2.25');
-  draw(4.5, '2.25 1 1 1 1 1 1 1 1 1 1 2.75');
-  draw(5.5, '1.25 1.25 1.25 6.25 1.25 1.25 1.25 1.25');
-  draw(0, '1 1 1', 15.25); draw(1.5, '1 1 1', 15.25); draw(2.5, '1 1 1', 15.25); draw(4.5, 'g1 1*', 15.25); draw(5.5, '1* 1* 1*', 15.25);
-  draw(1.5, '1 1 1 1', 18.5); draw(2.5, '1 1 1 1x2', 18.5); draw(3.5, '1 1 1', 18.5); draw(4.5, '1 1 1 1x2', 18.5); draw(5.5, '2 1', 18.5);
-  return `<svg class="kb-preview" viewBox="0 0 ${22.5 * U} ${6.5 * U}" role="img" aria-label="Apex 5">${rects.join('')}</svg>`;
-}
-
 export function scaleHex(h, brightness) {
   const f = (brightness ?? 100) / 100;
   const n = [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));

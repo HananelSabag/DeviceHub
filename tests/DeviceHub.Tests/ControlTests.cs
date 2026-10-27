@@ -2,6 +2,7 @@ using DeviceHub.Audio;
 using DeviceHub.Core;
 using DeviceHub.Devices;
 using DeviceHub.Interop;
+using DeviceHub.Lighting;
 
 namespace DeviceHub.Tests;
 
@@ -86,7 +87,8 @@ public class ControlTests
     [Fact]
     public void Apex_direct_report_colours_every_key_and_the_accent()
     {
-        var r = ApexKeyboard.DirectReport(new(255, 106, 26), new(255, 255, 255));
+        var static_ = new KeyboardLighting { Enabled = true, Main = "#FF6A1A", Accent = "#FFFFFF" };
+        var r = ApexKeyboard.DirectReport(KeyboardEffects.Frame(static_, 0));
         Assert.Equal(643, r.Length);
         Assert.Equal(0x3A, r[1]);
         Assert.Equal(ApexKeyboard.Keys.Length, r[2]);
@@ -98,10 +100,87 @@ public class ControlTests
     }
 
     [Fact]
-    public void Apex_brightness_scales_the_colours()
+    public void Brightness_scales_every_key()
     {
-        Assert.Equal(new ApexKeyboard.Rgb(128, 53, 13), ApexKeyboard.Scale(new(255, 106, 26), 50));
-        Assert.Equal(new ApexKeyboard.Rgb(0, 0, 0), ApexKeyboard.Scale(new(255, 255, 255), 0));
+        var half = KeyboardEffects.Frame(new KeyboardLighting { Enabled = true, Main = "#FF6A1A", Brightness = 50 }, 0);
+        Assert.Equal(new Rgb(128, 53, 13), half[0x05]);
+        var off = KeyboardEffects.Frame(new KeyboardLighting { Enabled = true, Main = "#FFFFFF", Brightness = 0 }, 0);
+        Assert.All(off.Values, c => Assert.Equal(default, c));
+    }
+
+    [Fact]
+    public void Gradient_runs_from_the_left_edge_to_the_right()
+    {
+        var f = KeyboardEffects.Frame(new KeyboardLighting { Enabled = true, Effect = "gradient", Main = "#FF0000", Second = "#0000FF" }, 0);
+        Assert.True(f[0x29].R > 230 && f[0x29].B < 25);  // Esc, far left: nearly all red
+        Assert.True(f[0x56].B > 230 && f[0x56].R < 25);  // keypad minus, far right: nearly all blue
+    }
+
+    [Fact]
+    public void Only_moving_effects_need_frames()
+    {
+        Assert.True(KeyboardEffects.Animated(new KeyboardLighting { Enabled = true, Effect = "wave" }));
+        Assert.True(KeyboardEffects.Animated(new KeyboardLighting { Enabled = true, Effect = "music" }));
+        Assert.False(KeyboardEffects.Animated(new KeyboardLighting { Enabled = true, Effect = "gradient" }));
+        Assert.False(KeyboardEffects.Animated(new KeyboardLighting { Enabled = false, Effect = "wave" }));
+    }
+
+    [Fact]
+    public void Music_effect_follows_the_sound_level()
+    {
+        var l = new KeyboardLighting { Enabled = true, Effect = "music", Main = "#FFFFFF" };
+        Assert.True(KeyboardEffects.Frame(l, 0, 0)[0x05].R < 30);    // silence: dim
+        Assert.Equal(255, KeyboardEffects.Frame(l, 0, 1)[0x05].R);   // a beat: full
+    }
+
+    [Fact]
+    public void The_layout_covers_every_key_once_and_fits_its_frame()
+    {
+        var codes = KeyboardLayout.Keys.Select(k => k.Code).ToList();
+        Assert.Equal(codes.Count, codes.Distinct().Count());
+        Assert.Equal(104, codes.Count); // full-size ANSI
+        Assert.All(KeyboardLayout.Keys, k => Assert.True(k.X + k.W <= KeyboardLayout.Width && k.Y + k.H <= KeyboardLayout.Height));
+        Assert.All(KeyboardLayout.Accent, code => Assert.Contains(code, codes));
+    }
+
+    [Fact]
+    public void Screen_report_is_the_0x61_picture()
+    {
+        var bits = new byte[640];
+        bits[0] = 0x80; // the top-left pixel
+        var r = ApexKeyboard.ScreenReport(bits);
+        Assert.Equal(643, r.Length);
+        Assert.Equal(0x00, r[0]);
+        Assert.Equal(0x61, r[1]);
+        Assert.Equal(0x80, r[2]);
+        Assert.Throws<ArgumentException>(() => ApexKeyboard.ScreenReport(new byte[10]));
+    }
+
+    [Fact]
+    public void Screen_pictures_pack_row_by_row_high_bit_first()
+    {
+        using var bmp = new System.Drawing.Bitmap(128, 40);
+        bmp.SetPixel(0, 0, System.Drawing.Color.White);
+        bmp.SetPixel(9, 1, System.Drawing.Color.White);
+        var bits = OledScreen.Pack(bmp);
+        Assert.Equal(640, bits.Length);
+        Assert.Equal(0x80, bits[0]);
+        Assert.Equal(0x40, bits[16 + 1]); // row 1, byte 1, second pixel
+        var shifted = OledScreen.Pack(bmp, 1, 0);
+        Assert.Equal(0x40, shifted[0]); // moved one pixel right
+    }
+
+    [Fact]
+    public void Every_screen_mode_draws_something()
+    {
+        Assert.Contains(OledScreen.Clock(new DateTime(2026, 10, 27, 19, 42, 30), english: true), b => b != 0);
+        Assert.Contains(OledScreen.Text("שלום", (0, 0)), b => b != 0);
+        Assert.Contains(OledScreen.Devices([], (0, 0)), b => b != 0); // icons and dashes even with nothing connected
+        foreach (var mode in new[] { "stars", "matrix", "energy", "sound", "goal" })
+        {
+            var a = ScreenAnimation.For(mode)!;
+            for (var t = 0.0; t < 3; t += 0.05) Assert.Equal(640, a.Frame(t, 0.5f).Length);
+        }
     }
 
     [Fact]

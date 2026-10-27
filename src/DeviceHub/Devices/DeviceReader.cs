@@ -21,6 +21,7 @@ internal static class DeviceReader
             var laptop = Task.Run(ReadLaptop);
             List<DeviceReading> all = [await mouse, await headset, await keyboard, await controller, await laptop];
             await DeviceControls.ReapplyAsync(hid);
+            Lighting.LightingEngine.Instance.SetDevices(all);
             return all;
         }
         finally { Gate.Release(); }

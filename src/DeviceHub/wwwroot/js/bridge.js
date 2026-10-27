@@ -27,7 +27,6 @@ const Preview = {
   deviceSettings: {
     mouse: { pollingHz: 1000, dpi: 16000, stages: [800, 1800, 4600, 7200, 16000], activeStage: 4, sleepSeconds: 300, lowBatteryPercent: 5 },
     headset: { sidetone: null, autoOff: null, eqPreset: null, eq: null },
-    keyboard: { lighting: null },
     controller: { lights: { red: 0, green: 60, blue: 255, player: 1, micLed: false } },
   },
   audio: {

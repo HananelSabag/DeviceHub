@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -10,7 +10,7 @@
     <AssemblyName>DeviceHub</AssemblyName>
     <RootNamespace>DeviceHub</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <Product>DeviceHub</Product>
     <Authors>Hananel Sabag</Authors>
     <Description>One small console-style app for my own mouse, headset, controller, laptop sensors and sound devices.</Description>

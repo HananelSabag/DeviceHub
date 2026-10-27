@@ -1,9 +1,11 @@
+using System.Globalization;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using DeviceHub.Audio;
 using DeviceHub.Core;
 using DeviceHub.Devices;
+using DeviceHub.Lighting;
 
 namespace DeviceHub;
 
@@ -18,7 +20,9 @@ internal static class Program
     };
 
     /// <summary>
-    /// DeviceHub.exe                              → the app
+    /// DeviceHub.exe                              → the app (a second start opens the first one's window)
+    /// DeviceHub.exe --tray                       → start quietly in the tray (how Windows starts it)
+    /// DeviceHub.exe --screen-preview clock out.png → the keyboard screen's picture, 4× larger
     /// DeviceHub.exe --dump-json out.json [en]    → read every device and the sound devices once, save them (read-only)
     /// DeviceHub.exe --audio-switch-test out.json → switch the default output to another device and straight back
     /// DeviceHub.exe --settings mouse out.json    → a device page's settings
@@ -67,8 +71,71 @@ internal static class Program
             return result.Ok ? 0 : 1;
         }
 
+        // How the keyboard's screen looks, as a picture: --screen-preview clock out.png [text]
+        if (args is ["--screen-preview", var mode, var previewPath, ..])
+        {
+            var devices = mode == "devices" ? DeviceReader.ReadAllAsync().GetAwaiter().GetResult() : [];
+            var track = mode == "music" ? NowPlaying.GetAsync().GetAwaiter().GetResult() : null;
+            var bits = mode switch
+            {
+                "devices" => OledScreen.Devices(devices, (0, 0)),
+                "music" when track is not null => OledScreen.Music(track, 0),
+                "text" => OledScreen.Text(args.Length > 3 ? args[3] : "", (0, 0)),
+                "image" => OledScreen.Picture(File.ReadAllBytes(args[3]))[0].Bits,
+                _ => OledScreen.Clock(DateTime.Now, args.Length > 3 && args[3] == "en"),
+            };
+            using var bmp = OledScreen.ToBitmap(bits);
+            bmp.Save(previewPath, System.Drawing.Imaging.ImageFormat.Png);
+            if (Environment.GetEnvironmentVariable("DEVICEHUB_SEND") == "1"
+                && ApexKeyboard.Find(Interop.Hid.Enumerate(ApexKeyboard.Vendor)) is { } kb && ApexKeyboard.Open(kb) is { } h)
+                using (h) ApexKeyboard.SendScreen(h, bits); // and on the keyboard itself, for checking by eye
+            return 0;
+        }
+
+        // An animation on the keyboard for a while, and its frames as one picture: --screen-demo energy 12 sheet.png
+        if (args is ["--screen-demo", var demoMode, var secondsText, var sheetPath, ..] && ScreenAnimation.For(demoMode) is { } demo)
+        {
+            var kb = ApexKeyboard.Find(Interop.Hid.Enumerate(ApexKeyboard.Vendor));
+            using var h = kb is null ? null : ApexKeyboard.Open(kb);
+            var level = new Audio.SoundLevel();
+            var shots = new List<byte[]>();
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            var total = double.Parse(secondsText, CultureInfo.InvariantCulture);
+            while (watch.Elapsed.TotalSeconds < total)
+            {
+                var t = watch.Elapsed.TotalSeconds;
+                var bits = demo.Frame(t, level.Read());
+                if (h is not null) ApexKeyboard.SendScreen(h, bits);
+                if (shots.Count < 12 && t >= shots.Count * Math.Min(total, 5) / 12) shots.Add(bits);
+                Thread.Sleep(50);
+            }
+            using var sheet = new System.Drawing.Bitmap(128 * 3 * 2 + 12, (40 * 3 + 6) * 6);
+            using (var g = System.Drawing.Graphics.FromImage(sheet))
+            {
+                g.Clear(System.Drawing.Color.FromArgb(60, 60, 60));
+                for (var i = 0; i < shots.Count; i++)
+                {
+                    using var shot = OledScreen.ToBitmap(shots[i], 3);
+                    g.DrawImage(shot, (i % 2) * (128 * 3 + 12), (i / 2) * (40 * 3 + 6));
+                }
+            }
+            sheet.Save(sheetPath, System.Drawing.Imaging.ImageFormat.Png);
+            return 0;
+        }
+
+        // One DeviceHub at a time: a second start (the shortcut, while it sits in the tray) opens the first one's window.
+        using var single = new Mutex(true, "DeviceHub.Single", out var first);
+        if (!first)
+        {
+            try { EventWaitHandle.OpenExisting(MainForm.ShowSignal).Set(); } catch (WaitHandleCannotBeOpenedException) { }
+            return 0;
+        }
+
         ApplicationConfiguration.Initialize();
-        Application.Run(new MainForm());
+        var settings = AppSettings.Load();
+        DeviceControls.StartLighting(settings.Language == "en");
+        Application.Run(new MainForm(startHidden: args.Contains("--tray")));
+        LightingEngine.Instance.Dispose();
         return 0;
     }
 

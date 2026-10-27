@@ -1,12 +1,13 @@
 using System.Text.Json;
 using DeviceHub.Core;
 using DeviceHub.Interop;
+using DeviceHub.Lighting;
 
 namespace DeviceHub.Devices;
 
 /// <summary>
 /// What DeviceHub has to remember itself: the headset can't report its sidetone, auto-off or equalizer back,
-/// and the controller's and keyboard's lights are forgotten when they lose power.
+/// and the controller's and keyboard's lights and the keyboard's screen are forgotten when they lose power.
 /// </summary>
 internal sealed record ControlState
 {
@@ -15,9 +16,11 @@ internal sealed record ControlState
     public string? EqPreset { get; init; }
     public double[]? Eq { get; init; }
     public DualSense.Lights? ControllerLights { get; init; }
-    public KeyboardLighting? Keyboard { get; init; }
+    public KeyboardLighting? Lighting { get; init; }
+    public OledSettings? Screen { get; init; }
 
     private static string FilePath => Path.Combine(AppSettings.DataDir, "devices.json");
+    public static string PicturePath => Path.Combine(AppSettings.DataDir, "screen-picture");
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
     public static ControlState Load()
@@ -33,17 +36,30 @@ internal sealed record ControlState
     }
 }
 
-/// <summary>own: the keyboard's saved profile. color: DeviceHub's colour on every key, an optional accent, 0-100 %.</summary>
-internal sealed record KeyboardLighting(string Mode, ApexKeyboard.Rgb Main, ApexKeyboard.Rgb? Accent, int Brightness = 100);
-
 /// <summary>Every change the page can ask for, one device at a time, never while another read or write is running.</summary>
 internal static class DeviceControls
 {
     private static ControlState state = ControlState.Load();
-    private static readonly HashSet<string> lit = []; // device paths that already got their lights since they were plugged in
+    private static readonly HashSet<string> lit = []; // controller paths that already got their lights since they were plugged in
+
+    /// <summary>Hands the remembered keyboard lighting and screen to the engine and starts it.</summary>
+    public static void StartLighting(bool english)
+    {
+        var engine = LightingEngine.Instance;
+        engine.English = english;
+        engine.Configure(state.Lighting ?? new(), state.Screen ?? new(), LoadPicture());
+        engine.Start();
+    }
+
+    private static List<(byte[], int)>? LoadPicture()
+    {
+        try { return File.Exists(ControlState.PicturePath) ? OledScreen.Picture(File.ReadAllBytes(ControlState.PicturePath)) : null; }
+        catch { return null; } // a broken picture file must not stop the rest
+    }
 
     public static async Task<object?> ReadSettings(string device)
     {
+        if (device == "keyboard") return KeyboardSettings();
         await DeviceReader.Gate.WaitAsync();
         try
         {
@@ -53,16 +69,25 @@ internal static class DeviceControls
                 "mouse" => await Task.Run(() => RazerMouse.ReadSettings(hid)),
                 "headset" => new { state.Sidetone, state.AutoOff, eqPreset = state.EqPreset ?? (state.Eq is null ? null : "custom"), eq = state.Eq, presets = ArctisHeadset.Presets },
                 "controller" => new { lights = state.ControllerLights },
-                "keyboard" => new { lighting = state.Keyboard },
                 _ => null,
             };
         }
         finally { DeviceReader.Gate.Release(); }
     }
 
+    /// <summary>The keyboard page: lighting, screen, and the key map the preview is drawn from.</summary>
+    private static object KeyboardSettings() => new
+    {
+        lighting = state.Lighting ?? new KeyboardLighting(),
+        screen = state.Screen ?? new OledSettings(),
+        hasPicture = File.Exists(ControlState.PicturePath),
+        layout = new { width = KeyboardLayout.Width, height = KeyboardLayout.Height, keys = KeyboardLayout.Keys.Select(k => new[] { k.Code, k.X, k.Y, k.W, k.H }), accent = KeyboardLayout.Accent },
+    };
+
     /// <summary>Applies one change and returns the device's settings as they are now.</summary>
     public static async Task<object?> Apply(string device, string action, JsonElement value)
     {
+        if (device == "keyboard") { ApplyKeyboard(action, value); return KeyboardSettings(); }
         await DeviceReader.Gate.WaitAsync();
         try
         {
@@ -105,13 +130,6 @@ internal static class DeviceControls
                     Remember(state with { ControllerLights = lights });
                     break;
 
-                case ("keyboard", "lighting"):
-                    var k = value.Deserialize<KeyboardLighting>(Program.Json) ?? throw new ArgumentException("lighting");
-                    if (k.Mode == "own") await ApexKeyboard.UseOwnLighting(hid);
-                    else await ApexKeyboard.SetColors(hid, k.Main, k.Accent, k.Brightness);
-                    Remember(state with { Keyboard = k });
-                    break;
-
                 default: throw new ArgumentException($"unknown control {device}/{action}");
             }
         }
@@ -119,9 +137,37 @@ internal static class DeviceControls
         return await ReadSettings(device);
     }
 
+    /// <summary>The keyboard is driven by the lighting engine: a change is remembered and handed over, never sent from here.</summary>
+    private static void ApplyKeyboard(string action, JsonElement value)
+    {
+        var engine = LightingEngine.Instance;
+        List<(byte[], int)>? picture = null;
+        switch (action)
+        {
+            case "lighting":
+                Remember(state with { Lighting = value.Deserialize<KeyboardLighting>(Program.Json) ?? throw new ArgumentException("lighting") });
+                break;
+            case "screen":
+                Remember(state with { Screen = value.Deserialize<OledSettings>(Program.Json) ?? throw new ArgumentException("screen") });
+                break;
+            case "picture":
+                // A data URL from the page's file picker: decoded and dithered once here, kept as the original file.
+                var url = value.GetString() ?? "";
+                var bytes = Convert.FromBase64String(url[(url.IndexOf(',') + 1)..]);
+                if (bytes.Length > 8 * 1024 * 1024) throw new ArgumentException("the picture is larger than 8 MB");
+                picture = OledScreen.Picture(bytes);
+                Directory.CreateDirectory(AppSettings.DataDir);
+                File.WriteAllBytes(ControlState.PicturePath, bytes);
+                Remember(state with { Screen = (state.Screen ?? new()) with { Mode = "image" } });
+                break;
+            default: throw new ArgumentException($"unknown control keyboard/{action}");
+        }
+        engine.Configure(state.Lighting ?? new(), state.Screen ?? new(), picture);
+    }
+
     /// <summary>
-    /// Lights the controller and keyboard lose with power: sent again once each time they are plugged in.
-    /// Called with the HID list of every device read; does nothing for devices that already have them.
+    /// The controller's lights are lost with power: sent again once each time it is plugged in.
+    /// Called with the HID list of every device read. (The keyboard is the lighting engine's job.)
     /// </summary>
     public static async Task ReapplyAsync(IReadOnlyList<HidInfo> hid)
     {
@@ -134,14 +180,6 @@ internal static class DeviceControls
         {
             try { await DualSense.SetLights(hid, lights); }
             catch (IOException) { lit.Remove(pad.Path); }
-        }
-
-        if (state.Keyboard is { Mode: "color" } k
-            && hid.FirstOrDefault(x => x.Vid == ApexKeyboard.Vendor && x.Pid == ApexKeyboard.Apex5 && x.UsagePage == 0xFFC0 && x.Usage == 0x01) is { } kb
-            && lit.Add(kb.Path))
-        {
-            try { await ApexKeyboard.SetColors(hid, k.Main, k.Accent, k.Brightness); }
-            catch (IOException) { lit.Remove(kb.Path); }
         }
     }
 

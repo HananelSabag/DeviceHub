@@ -3,6 +3,7 @@ using System.Text.Json;
 using DeviceHub.Audio;
 using DeviceHub.Core;
 using DeviceHub.Devices;
+using DeviceHub.Lighting;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 
@@ -11,12 +12,13 @@ namespace DeviceHub;
 /// <summary>
 /// The host window: a WebView2 showing wwwroot. The page talks to us with chrome.webview.postMessage({ cmd })
 /// and we answer with { type, data }.
-/// While the window is visible the laptop sensors update every 3 seconds and the wireless devices every minute
-/// (and right away when something is plugged in or out). Minimized, nothing is read and the page is suspended.
-/// Sound devices are never polled: Windows tells us when they change.
+/// Open: the laptop sensors update every 3 seconds and the wireless devices every minute (and right away when
+/// something is plugged in or out). In the tray: the page is suspended and the devices are read every 2 minutes,
+/// for the tray's tooltip, low-battery notes and the keyboard screen. Sound devices are never polled.
 /// </summary>
 internal sealed class MainForm : Form
 {
+    public const string ShowSignal = "DeviceHub.Show";
     private const string Host = "devicehub.example";
     private const int WmDeviceChange = 0x0219;
     private static readonly Color Backdrop = Color.FromArgb(26, 29, 35);
@@ -26,14 +28,21 @@ internal sealed class MainForm : Form
     private readonly System.Windows.Forms.Timer deviceTimer = new() { Interval = 60_000 };
     private readonly System.Windows.Forms.Timer plugDebounce = new() { Interval = 1500 };
     private readonly System.Windows.Forms.Timer audioDebounce = new() { Interval = 250 };
+    private readonly NotifyIcon tray = new();
+    private readonly EventWaitHandle showSignal = new(false, EventResetMode.AutoReset, ShowSignal);
+    private readonly HashSet<string> warned = []; // devices already warned about since they dropped low
     private AppSettings settings = AppSettings.Load();
     private AudioWatcher? audioWatcher;
+    private bool startHidden;
+    private bool exiting;
     private bool pageReady;
+    private bool watchScreen;
     private bool readingDevices;
     private bool readingSensors;
 
-    public MainForm()
+    public MainForm(bool startHidden)
     {
+        this.startHidden = startHidden;
         I18n.English = settings.Language == "en";
         Text = "DeviceHub";
         Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
@@ -43,6 +52,12 @@ internal sealed class MainForm : Form
         Size = LogicalToDeviceUnits(new Size(1280, 800));
         StartPosition = FormStartPosition.CenterScreen;
         Controls.Add(web);
+
+        tray.Icon = Icon;
+        tray.Text = "DeviceHub";
+        tray.Visible = true;
+        tray.DoubleClick += (_, _) => ShowFromTray();
+        BuildTrayMenu();
 
         Load += async (_, _) =>
         {
@@ -54,16 +69,82 @@ internal sealed class MainForm : Form
             try { await OnResizedAsync(); }
             catch (Exception ex) { ReportError("resize", ex); }
         };
-        FormClosing += (_, _) =>
+        FormClosing += (_, e) =>
         {
+            // The X, Alt+F4 or the taskbar's "Close window" (a plain WM_CLOSE comes as None); not Windows shutting down.
+            if (!exiting && settings.KeepInTray && e.CloseReason is CloseReason.UserClosing or CloseReason.None)
+            {
+                e.Cancel = true; // to the tray: the keyboard's lights and screen keep going
+                HideToTray();
+                return;
+            }
             sensorTimer.Stop();
             deviceTimer.Stop();
             audioWatcher?.Dispose();
+            tray.Visible = false;
         };
         sensorTimer.Tick += (_, _) => ReadSensors();
         deviceTimer.Tick += (_, _) => ReadDevices();
         plugDebounce.Tick += (_, _) => { plugDebounce.Stop(); ReadDevices(); };
         audioDebounce.Tick += (_, _) => { audioDebounce.Stop(); PostAudio(); };
+        LightingEngine.Instance.ScreenChanged += bits => { if (watchScreen) OnUiThread(() => Post("screen", Convert.ToBase64String(bits))); };
+
+        // A second DeviceHub started while this one is in the tray asks us to come forward.
+        new Thread(() => { while (showSignal.WaitOne()) OnUiThread(ShowFromTray); }) { IsBackground = true, Name = "DeviceHub show" }.Start();
+    }
+
+    /// <summary>Started with Windows: create the window but keep it hidden, and read the devices in the background.</summary>
+    protected override void SetVisibleCore(bool value)
+    {
+        if (startHidden)
+        {
+            startHidden = false;
+            if (!IsHandleCreated) CreateHandle();
+            value = false;
+            deviceTimer.Interval = 120_000;
+            deviceTimer.Start();
+            ReadDevices();
+        }
+        base.SetVisibleCore(value);
+    }
+
+    private void BuildTrayMenu()
+    {
+        var menu = new ContextMenuStrip { RightToLeft = I18n.English ? RightToLeft.No : RightToLeft.Yes };
+        menu.Items.Add(I18n.L("פתח את DeviceHub", "Open DeviceHub"), null, (_, _) => ShowFromTray());
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(I18n.L("יציאה", "Exit"), null, (_, _) => { exiting = true; Close(); });
+        tray.ContextMenuStrip?.Dispose();
+        tray.ContextMenuStrip = menu;
+    }
+
+    private void HideToTray()
+    {
+        Hide();
+        sensorTimer.Stop();
+        deviceTimer.Stop();
+        deviceTimer.Interval = 120_000;
+        deviceTimer.Start();
+        watchScreen = false;
+        _ = SuspendPageAsync();
+    }
+
+    private void ShowFromTray()
+    {
+        if (IsDisposed) return;
+        var wasHidden = !Visible;
+        Show();
+        if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+        Activate();
+        if (wasHidden && pageReady) { web.Visible = true; RefreshAll(); }
+    }
+
+    private async Task SuspendPageAsync()
+    {
+        if (web.CoreWebView2 is null) return;
+        web.Visible = false;
+        try { await web.CoreWebView2.TrySuspendAsync(); }
+        catch (InvalidOperationException) { } // already suspended, or busy with a dialog
     }
 
     private async Task InitWebAsync()
@@ -97,11 +178,9 @@ internal sealed class MainForm : Form
         {
             sensorTimer.Stop();
             deviceTimer.Stop();
-            web.Visible = false;
-            try { await web.CoreWebView2.TrySuspendAsync(); }
-            catch (InvalidOperationException) { } // already suspended, or busy with a dialog
+            await SuspendPageAsync();
         }
-        else if (!web.Visible)
+        else if (!web.Visible && Visible)
         {
             web.Visible = true; // visibility resumes a suspended WebView2
             if (pageReady) RefreshAll();
@@ -111,10 +190,14 @@ internal sealed class MainForm : Form
     /// <summary>Plugging a USB device in or out (a dongle, the controller): read the devices again once things settle.</summary>
     protected override void WndProc(ref Message m)
     {
-        if (m.Msg == WmDeviceChange && pageReady && WindowState != FormWindowState.Minimized)
+        if (m.Msg == WmDeviceChange)
         {
-            plugDebounce.Stop();
-            plugDebounce.Start();
+            LightingEngine.Instance.DevicesChanged();
+            if (pageReady && Visible && WindowState != FormWindowState.Minimized)
+            {
+                plugDebounce.Stop();
+                plugDebounce.Start();
+            }
         }
         base.WndProc(ref m);
     }
@@ -139,7 +222,7 @@ internal sealed class MainForm : Form
             switch (cmd)
             {
                 case "hello":
-                    Post("hello", new { settings, version = Application.ProductVersion.Split('+')[0] });
+                    Post("hello", new { settings, startWithWindows = Startup.Enabled, version = Application.ProductVersion.Split('+')[0] });
                     pageReady = true;
                     RefreshAll();
                     break;
@@ -158,6 +241,12 @@ internal sealed class MainForm : Form
                 case "settingsFor":
                     var forDevice = msg.GetProperty("device").GetString() ?? "";
                     Post("deviceSettings", new { device = forDevice, settings = await DeviceControls.ReadSettings(forDevice) });
+                    break;
+
+                case "watchScreen":
+                    // The keyboard page shows what the screen shows, live, only while it is open.
+                    watchScreen = msg.GetProperty("on").GetBoolean();
+                    if (watchScreen && LightingEngine.Instance.CurrentScreen is { } now) Post("screen", Convert.ToBase64String(now));
                     break;
 
                 case "control":
@@ -181,8 +270,10 @@ internal sealed class MainForm : Form
                     settings = JsonSerializer.Deserialize<AppSettings>(msg.GetProperty("settings").GetRawText(), Program.Json) ?? settings;
                     settings.Save();
                     I18n.English = settings.Language == "en";
-                    Post("settings", settings);
-                    if (settings.Language != languageBefore) PostAudio(); // device names come from here, in the chosen language
+                    LightingEngine.Instance.English = I18n.English;
+                    if (msg.TryGetProperty("startWithWindows", out var sw)) Startup.Set(sw.GetBoolean());
+                    Post("settings", new { settings, startWithWindows = Startup.Enabled });
+                    if (settings.Language != languageBefore) { PostAudio(); BuildTrayMenu(); } // device names come from here, in the chosen language
                     break;
             }
         }
@@ -199,6 +290,7 @@ internal sealed class MainForm : Form
         ReadSensors();
         sensorTimer.Start();
         deviceTimer.Stop();
+        deviceTimer.Interval = 60_000;
         deviceTimer.Start();
     }
 
@@ -209,11 +301,33 @@ internal sealed class MainForm : Form
         try
         {
             Post("devicesBusy", new { });
-            Post("devices", await DeviceReader.ReadAllAsync());
+            var list = await DeviceReader.ReadAllAsync();
+            Post("devices", list);
+            UpdateTray(list);
         }
         catch (Exception ex) { ReportError("devices", ex); }
         finally { readingDevices = false; }
     }
+
+    /// <summary>The tray's tooltip shows every battery; a device dropping below 15 % gets one note until it recovers.</summary>
+    private void UpdateTray(List<DeviceReading> list)
+    {
+        var parts = list.Where(d => d.Battery is not null && d.State == DeviceState.Ready)
+            .Select(d => $"{Short(d.Id)} {d.Battery}%{(d.Charging ? "+" : "")}");
+        var tip = "DeviceHub\n" + string.Join("  ", parts);
+        tray.Text = tip.Length > 127 ? tip[..127] : tip;
+
+        foreach (var d in list.Where(d => d.Battery is not null))
+        {
+            if (d.Battery >= 25 || d.Charging) { warned.Remove(d.Id); continue; }
+            if (d.Battery > 15 || !settings.BatteryAlerts || !warned.Add(d.Id)) continue;
+            tray.ShowBalloonTip(8000, I18n.L("סוללה חלשה", "Battery low"),
+                I18n.L($"{Name(d.Id)}: נשארו {d.Battery}%", $"{Name(d.Id)}: {d.Battery}% left"), ToolTipIcon.Warning);
+        }
+    }
+
+    private static string Short(string id) => id switch { "mouse" => I18n.L("עכבר", "Mouse"), "headset" => I18n.L("אוזניות", "Headset"), "controller" => I18n.L("שלט", "Pad"), _ => id };
+    private static string Name(string id) => id switch { "mouse" => "Razer Basilisk X HyperSpeed", "headset" => "Arctis 7+", "controller" => "DualSense Edge", _ => id };
 
     private async void ReadSensors()
     {
@@ -237,9 +351,10 @@ internal sealed class MainForm : Form
         catch (Exception postError) { Debug.WriteLine(postError); } // WebView2 may already be closing; never escape an async event handler.
     }
 
+    /// <summary>To the page, while it is there to listen (not in the tray, not minimized).</summary>
     private void Post(string type, object data)
     {
-        if (IsDisposed || web.CoreWebView2 is null) return;
+        if (IsDisposed || web.CoreWebView2 is null || !web.Visible) return;
         web.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new { type, data }, Program.Json));
     }
 
@@ -248,5 +363,11 @@ internal sealed class MainForm : Form
         if (IsDisposed || !IsHandleCreated) return;
         try { BeginInvoke(action); }
         catch (InvalidOperationException) { } // window closing
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) { tray.Dispose(); showSignal.Dispose(); }
+        base.Dispose(disposing);
     }
 }

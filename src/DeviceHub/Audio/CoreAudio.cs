@@ -75,6 +75,13 @@ internal interface IPolicyConfig
     [PreserveSig] int SetDefaultEndpoint([MarshalAs(UnmanagedType.LPWStr)] string id, Role role);
 }
 
+/// <summary>The peak meter Windows' volume mixer draws: how loud the device plays right now, 0-1.</summary>
+[ComImport, Guid("C02216F6-8C67-4B5B-9D00-D008E73E0064"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+internal interface IAudioMeterInformation
+{
+    [PreserveSig] int GetPeakValue(out float peak);
+}
+
 [StructLayout(LayoutKind.Sequential)] internal struct PropertyKey { public Guid Fmtid; public int Pid; }
 [StructLayout(LayoutKind.Explicit, Size = 24)] internal struct PropVariant { [FieldOffset(0)] public short Vt; [FieldOffset(8)] public IntPtr Pointer; }
 

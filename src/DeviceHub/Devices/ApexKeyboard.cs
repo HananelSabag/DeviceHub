@@ -1,19 +1,24 @@
 using DeviceHub.Interop;
+using DeviceHub.Lighting;
+using Microsoft.Win32.SafeHandles;
 
 namespace DeviceHub.Devices;
 
 /// <summary>
-/// SteelSeries Apex 5 (1038:161C). Its vendor collection on interface 1 (page FFC0, usage 01) takes OpenRGB's
-/// "Gen 1" Apex protocol: a 643-byte feature report 0x3A with a colour for every key (direct mode), output report
-/// 0x3B to hand the lighting back to the keyboard's own profile. (The brightness commands 0x23 / 0xA3 belong to newer
-/// models: this Apex 5 never answers 0xA3, so brightness here scales the colours instead.)
-/// Direct colours last until the keyboard loses power; DeviceHub sends them again when it sees the keyboard.
+/// SteelSeries Apex 5 (1038:161C). Its vendor collection on interface 1 (page FFC0, usage 01) takes:
+/// <list type="bullet">
+/// <item>feature report 0x3A, a colour for every key (OpenRGB's "Gen 1" Apex direct mode);</item>
+/// <item>output report 0x3B, back to the keyboard's own saved lighting;</item>
+/// <item>feature report 0x61, a 128 × 40 one-bit picture for the OLED screen (apex-tux's protocol).</item>
+/// </list>
+/// (The brightness commands 0x23 / 0xA3 belong to newer models: this Apex 5 never answers 0xA3, so brightness
+/// scales the colours instead.) Colours and the picture last until the keyboard loses power.
 /// </summary>
 internal static class ApexKeyboard
 {
     public const ushort Vendor = 0x1038, Apex5 = 0x161C;
     public const string Model = "SteelSeries Apex 5";
-    private const int DirectLength = 643;
+    private const int ReportLength = 643;
 
     /// <summary>Every key id the Apex family knows (HID usage codes), OpenRGB's list. Keys a model lacks are ignored.</summary>
     internal static readonly byte[] Keys =
@@ -26,64 +31,63 @@ internal static class ApexKeyboard
         0x59, 0x5A, 0x5B, 0x5C, 0x5D, 0x5E, 0x5F, 0x60, 0x61, 0x62, 0x63, 0xFB,
     ];
 
-    /// <summary>W A S D and the arrows: the keys an accent colour picks out.</summary>
-    internal static readonly byte[] AccentKeys = [0x1A, 0x04, 0x16, 0x07, 0x4F, 0x50, 0x51, 0x52];
-
-    public sealed record Rgb(int R, int G, int B);
-
     /// <summary>The keyboard has no battery or sensor to read: this only says whether it is plugged in.</summary>
     public static Task<DeviceReading> ReadAsync(IReadOnlyList<HidInfo> hid) => Task.FromResult<DeviceReading>(Find(hid) is null
         ? new() { Id = "keyboard", Model = Model, State = DeviceState.Missing }
         : new() { Id = "keyboard", Model = Model, State = DeviceState.Ready, Link = "usb" });
 
-    /// <summary>One colour on every key, and optionally another on W A S D and the arrows, at a brightness of 0-100 %.</summary>
-    public static Task SetColors(IReadOnlyList<HidInfo> hid, Rgb main, Rgb? accent, int brightness = 100)
+    public static HidInfo? Find(IReadOnlyList<HidInfo> hid) =>
+        hid.FirstOrDefault(x => x.Vid == Vendor && x.Pid == Apex5 && x.UsagePage == 0xFFC0 && x.Usage == 0x01 && x.FeatureLength >= ReportLength);
+
+    /// <summary>A handle for feature reports (colours, the screen); keep it open while animating.</summary>
+    public static SafeFileHandle? Open(HidInfo d) => Hid.Open(d.Path, readWrite: true);
+
+    /// <summary>One colour per key. Keys missing from the map get the first colour given (or off).</summary>
+    public static void SendColors(SafeFileHandle h, IReadOnlyDictionary<byte, Rgb> colors)
     {
-        var d = Find(hid) ?? throw new IOException("the keyboard isn't connected");
-        using var h = Hid.Open(d.Path, readWrite: true) ?? throw new IOException("cannot open the keyboard");
-        var report = DirectReport(Scale(main, brightness), accent is null ? null : Scale(accent, brightness));
+        var report = DirectReport(colors);
         if (!Hid.HidD_SetFeature(h, report, report.Length)) throw new IOException("the keyboard refused the colours");
-        return Task.CompletedTask;
     }
 
-    internal static Rgb Scale(Rgb c, int brightness)
+    /// <summary>A picture on the OLED screen: 640 bytes, 128 × 40 pixels, row by row, leftmost pixel in the high bit.</summary>
+    public static void SendScreen(SafeFileHandle h, ReadOnlySpan<byte> bits)
     {
-        var f = Math.Clamp(brightness, 0, 100) / 100.0;
-        return new Rgb((int)Math.Round(c.R * f), (int)Math.Round(c.G * f), (int)Math.Round(c.B * f));
+        var report = ScreenReport(bits);
+        if (!Hid.HidD_SetFeature(h, report, report.Length)) throw new IOException("the keyboard refused the picture");
     }
 
     /// <summary>Back to the lighting saved in the keyboard (its own profile).</summary>
-    public static async Task UseOwnLighting(IReadOnlyList<HidInfo> hid)
+    public static void UseOwnLighting(HidInfo d)
     {
-        var d = Find(hid) ?? throw new IOException("the keyboard isn't connected");
-        await using var fs = Hid.OpenStream(d.Path, write: true) ?? throw new IOException("cannot open the keyboard");
-        await fs.WriteAsync(Output(d, 0x3B));
+        using var fs = Hid.OpenStream(d.Path, write: true) ?? throw new IOException("cannot open the keyboard");
+        var buf = new byte[Math.Max(2, d.OutputLength)];
+        buf[1] = 0x3B;
+        fs.Write(buf);
     }
 
-    internal static byte[] DirectReport(Rgb main, Rgb? accent)
+    internal static byte[] DirectReport(IReadOnlyDictionary<byte, Rgb> colors)
     {
-        var buf = new byte[DirectLength];
+        var buf = new byte[ReportLength];
         buf[1] = 0x3A;
         buf[2] = (byte)Keys.Length;
+        var fallback = colors.Count > 0 ? colors.Values.First() : default;
         for (var i = 0; i < Keys.Length; i++)
         {
-            var c = accent is not null && AccentKeys.Contains(Keys[i]) ? accent : main;
+            var c = colors.TryGetValue(Keys[i], out var v) ? v : fallback;
             buf[3 + i * 4] = Keys[i];
-            buf[4 + i * 4] = (byte)Math.Clamp(c.R, 0, 255);
-            buf[5 + i * 4] = (byte)Math.Clamp(c.G, 0, 255);
-            buf[6 + i * 4] = (byte)Math.Clamp(c.B, 0, 255);
+            buf[4 + i * 4] = c.R;
+            buf[5 + i * 4] = c.G;
+            buf[6 + i * 4] = c.B;
         }
         return buf;
     }
 
-    private static byte[] Output(HidInfo d, byte command, params byte[] args)
+    internal static byte[] ScreenReport(ReadOnlySpan<byte> bits)
     {
-        var buf = new byte[Math.Max(2 + args.Length, d.OutputLength)];
-        buf[1] = command;
-        args.CopyTo(buf, 2);
+        if (bits.Length != 640) throw new ArgumentException("the screen takes 640 bytes", nameof(bits));
+        var buf = new byte[ReportLength];
+        buf[1] = 0x61;
+        bits.CopyTo(buf.AsSpan(2));
         return buf;
     }
-
-    private static HidInfo? Find(IReadOnlyList<HidInfo> hid) =>
-        hid.FirstOrDefault(x => x.Vid == Vendor && x.Pid == Apex5 && x.UsagePage == 0xFFC0 && x.Usage == 0x01 && x.FeatureLength >= DirectLength);
 }
