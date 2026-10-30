@@ -12,7 +12,26 @@ function hue(h) {
   return [r, g, b].map(v => Math.round(v * 255));
 }
 
-export const ANIMATED = ['breathing', 'spectrum', 'wave', 'music', 'reactive', 'ripple'];
+export const ANIMATED = ['breathing', 'spectrum', 'wave', 'music', 'reactive', 'ripple', 'starlight', 'rain', 'fire', 'aurora', 'visualizer'];
+
+const seed = code => ((Math.imul(code, 2654435761) >>> 0) % 1000) / 1000;
+const HEIGHT = 6.5;
+
+/** The CPU heat as a colour, the same stops as the host's KeyboardEffects.Heat. */
+export function heatColor(c) {
+  const stops = [[50, [30, 91, 255]], [62, [43, 234, 90]], [75, [255, 208, 0]], [85, [255, 106, 26]], [92, [255, 42, 42]]];
+  if (c <= stops[0][0]) return stops[0][1];
+  for (let i = 1; i < stops.length; i++) if (c <= stops[i][0]) return lerp(stops[i - 1][1], stops[i][1], (c - stops[i - 1][0]) / (stops[i][0] - stops[i - 1][0]));
+  return stops.at(-1)[1];
+}
+
+function fire(y, x, t, speed, s) {
+  const flicker = 0.5 + 0.5 * Math.sin(t * (3 + speed * 0.6) + x * 9.1 + s * 5) * Math.sin(t * 3.7 + x * 4.3 + s * 2);
+  const heat = Math.min(1, Math.max(0, y * 1.25 - 0.45 + flicker * 0.55));
+  return heat < 0.4 ? lerp([0, 0, 0], [170, 8, 0], heat / 0.4)
+    : heat < 0.75 ? lerp([170, 8, 0], [255, 100, 0], (heat - 0.4) / 0.35)
+    : lerp([255, 100, 0], [255, 210, 60], (heat - 0.75) / 0.25);
+}
 
 // The preview has no real key presses: it pretends one every 1.5 s, on a key picked from this row of letters.
 const DEMO_KEYS = [[4.5, 3.5], [8.5, 2.5], [6.5, 4.5], [11.5, 3.5], [3.5, 2.5], [9.5, 4.5]];
@@ -48,6 +67,24 @@ export function keyColor(l, key, layout, t) {
       c = lerp(scale(second, 0.35), main, Math.min(1, v));
       break;
     }
+    case 'starlight': c = lerp(scale(second, 0.12), main, Math.max(0, Math.sin((t * (0.25 + speed * 0.07) + seed(key.code) * 7.3) * Math.PI * 2)) ** 12); break;
+    case 'rain': {
+      const column = Math.floor(key.x + key.w / 2), period = 2.3 - speed * 0.16;
+      const head = ((t / period + seed(column * 7 + 3)) % 1.5) * (HEIGHT + 2) - 1;
+      const behind = head - ((key.y ?? 0) + 0.5);
+      c = lerp(scale(second, 0.1), main, behind >= 0 && behind < 2.4 ? 1 - behind / 2.4 : 0);
+      break;
+    }
+    case 'fire': c = fire(((key.y ?? 0) + 0.5) / HEIGHT, x, t, speed, seed(key.code)); break;
+    case 'aurora': c = scale(lerp(main, second, 0.5 + 0.5 * Math.sin(x * 5 + t * speed * 0.25 + Math.sin((key.y ?? 0) * 1.3 + t * 0.6) * 1.5)), 0.65 + 0.35 * Math.sin(x * 3 - t * 0.4)); break;
+    case 'visualizer': {
+      // The preview has no sound: a level that rises and falls on its own.
+      const level = 0.45 + 0.4 * Math.sin(t * 2.1) * Math.sin(t * 0.7 + 1);
+      const height = 1 - ((key.y ?? 0) + 0.5) / HEIGHT, column = Math.floor(x * 22);
+      c = height <= level * 1.35 * (0.7 + 0.3 * Math.sin(column * 1.7 + t * 9)) ? lerp(main, second, height) : scale(main, 0.06);
+      break;
+    }
+    case 'temperature': c = heatColor(l.previewTemp ?? 65); break;
     default: c = own;
   }
   c = scale(c, (l.brightness ?? 100) / 100);
@@ -83,6 +120,12 @@ export function effectSwatch(effect, l) {
     case 'music': return `repeating-linear-gradient(90deg, ${main} 0 8%, #111 8% 12%, ${main} 12% 15%, #111 15% 22%)`;
     case 'reactive': return `radial-gradient(circle at 30% 50%, ${main} 0 14%, ${second} 15% 100%)`;
     case 'ripple': return `radial-gradient(circle at 30% 50%, ${second} 0 20%, ${main} 22% 30%, ${second} 32% 100%)`;
+    case 'aurora': return `linear-gradient(90deg, ${main}, ${second}, ${main})`;
+    case 'starlight': return `radial-gradient(circle at 20% 50%, ${main} 0 6%, transparent 7%), radial-gradient(circle at 65% 50%, ${main} 0 5%, transparent 6%), #111`;
+    case 'rain': return `repeating-linear-gradient(90deg, ${main} 0 6%, #111 6% 18%)`;
+    case 'fire': return 'linear-gradient(90deg, #aa0800, #ff6400, #ffd23c, #ff6400, #aa0800)';
+    case 'visualizer': return `linear-gradient(90deg, ${main} 0 55%, #111 55%)`;
+    case 'temperature': return 'linear-gradient(90deg, #1e5bff, #2bea5a, #ffd000, #ff6a1a, #ff2a2a)';
     default: return main;
   }
 }

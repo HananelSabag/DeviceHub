@@ -9,7 +9,7 @@ namespace DeviceHub.Lighting;
 internal sealed record KeyboardLighting
 {
     public bool Enabled { get; init; }
-    /// <summary>static | breathing | spectrum | wave | gradient | music | reactive | ripple</summary>
+    /// <summary>static | breathing | spectrum | wave | gradient | music | reactive | ripple | starlight | rain | fire | aurora | visualizer | temperature</summary>
     public string Effect { get; init; } = "static";
     public string Main { get; init; } = "#FF6A1A";
     /// <summary>W A S D and the arrows in their own colour (static and breathing); null for none.</summary>
@@ -46,7 +46,11 @@ internal readonly record struct Rgb(byte R, byte G, byte B)
 internal static class KeyboardEffects
 {
     /// <summary>Effects that change over time and need frames; the others are sent once.</summary>
-    public static bool Animated(KeyboardLighting l) => l.Enabled && l.Effect is "breathing" or "spectrum" or "wave" or "music" or "reactive" or "ripple";
+    public static bool Animated(KeyboardLighting l) => l.Enabled && l.Effect is "breathing" or "spectrum" or "wave" or "music" or "reactive" or "ripple"
+        or "starlight" or "rain" or "fire" or "aurora" or "visualizer";
+
+    /// <summary>The temperature effect changes with the CPU's heat: a new colour every couple of seconds, not every frame.</summary>
+    public static bool FollowsHeat(KeyboardLighting l) => l.Enabled && l.Effect == "temperature";
 
     /// <summary>Effects that answer key presses (and so need to know which keys are pressed).</summary>
     public static bool WantsKeys(KeyboardLighting l) => l.Enabled && l.Effect is "reactive" or "ripple";
@@ -61,7 +65,7 @@ internal static class KeyboardEffects
         KeyboardLayout.Keys.ToDictionary(k => k.Code, k => (k.X + k.W / 2, k.Y + k.H / 2));
 
     /// <summary>A colour for every key at a moment in time (seconds), brightness applied. level: the sound, 0-1 (music).</summary>
-    public static Dictionary<byte, Rgb> Frame(KeyboardLighting l, double t, float level = 0, IReadOnlyList<Press>? presses = null)
+    public static Dictionary<byte, Rgb> Frame(KeyboardLighting l, double t, float level = 0, IReadOnlyList<Press>? presses = null, int? temperature = null)
     {
         var main = Rgb.Parse(l.Main);
         var accent = l.Accent is null ? (Rgb?)null : Rgb.Parse(l.Accent);
@@ -85,11 +89,63 @@ internal static class KeyboardEffects
                 // Key presses, over a background in the second colour: the key itself, or a ring spreading from it.
                 "reactive" => Rgb.Lerp(second.Scale(0.35), main, Reactive(k.Code, t, presses, Fade(l))),
                 "ripple" => Rgb.Lerp(second.Scale(0.35), main, Ripple(k, t, presses, Fade(l), speed)),
+                // Stars: keys glint in the main colour, one at a time, over a faint background.
+                "starlight" => Rgb.Lerp(second.Scale(0.12), main, Math.Pow(Math.Max(0, Math.Sin((t * (0.25 + speed * 0.07) + Seed(k.Code) * 7.3) * Math.Tau)), 12)),
+                "rain" => Rgb.Lerp(second.Scale(0.1), main, Rain(k, t, speed)),
+                "fire" => Fire((k.Y + k.H / 2) / KeyboardLayout.Height, x, t, speed, Seed(k.Code)),
+                // Aurora: the two colours flowing into each other in slow waves.
+                "aurora" => Rgb.Lerp(main, second, 0.5 + 0.5 * Math.Sin(x * 5 + t * speed * 0.25 + Math.Sin(k.Y * 1.3 + t * 0.6) * 1.5))
+                    .Scale(0.65 + 0.35 * Math.Sin(x * 3 - t * 0.4)),
+                "visualizer" => Meter(k, x, t, level, main, second),
+                "temperature" => Heat(temperature) ?? own,
                 _ => own,
             };
             colors[k.Code] = c.Scale(bright);
         }
         return colors;
+    }
+
+    /// <summary>A fixed number 0-1 for each key, so effects look random but stay the same from frame to frame.</summary>
+    private static double Seed(byte code) => unchecked((uint)(code * 2654435761u)) % 1000 / 1000.0;
+
+    /// <summary>Drops falling down each column of keys, every column at its own moment.</summary>
+    private static double Rain(KeyboardLayout.Key k, double t, int speed)
+    {
+        var column = (int)(k.X + k.W / 2);
+        var period = 2.3 - speed * 0.16;
+        var head = ((t / period + Seed((byte)(column * 7 + 3))) % 1.5) * (KeyboardLayout.Height + 2) - 1;
+        var behind = head - (k.Y + k.H / 2);
+        return behind is >= 0 and < 2.4 ? 1 - behind / 2.4 : 0;
+    }
+
+    /// <summary>Flames: hottest on the bottom rows, flickering, from dark red through orange to yellow.</summary>
+    private static Rgb Fire(double y, double x, double t, int speed, double seed)
+    {
+        var flicker = 0.5 + 0.5 * Math.Sin(t * (3 + speed * 0.6) + x * 9.1 + seed * 5) * Math.Sin(t * 3.7 + x * 4.3 + seed * 2);
+        var heat = Math.Clamp(y * 1.25 - 0.45 + flicker * 0.55, 0, 1);
+        return heat < 0.4 ? Rgb.Lerp(new Rgb(0, 0, 0), new Rgb(170, 8, 0), heat / 0.4)
+            : heat < 0.75 ? Rgb.Lerp(new Rgb(170, 8, 0), new Rgb(255, 100, 0), (heat - 0.4) / 0.35)
+            : Rgb.Lerp(new Rgb(255, 100, 0), new Rgb(255, 210, 60), (heat - 0.75) / 0.25);
+    }
+
+    /// <summary>A level meter across the keyboard: columns rise from the bottom row with the sound, coloured by height.</summary>
+    private static Rgb Meter(KeyboardLayout.Key k, double x, double t, float level, Rgb low, Rgb high)
+    {
+        var height = 1 - (k.Y + k.H / 2) / KeyboardLayout.Height;      // bottom row ≈ 0.1, function row ≈ 0.95
+        var column = Math.Floor(x * 22);
+        var reach = level * 1.35 * (0.7 + 0.3 * Math.Sin(column * 1.7 + t * 9));
+        return height <= reach ? Rgb.Lerp(low, high, height) : low.Scale(0.06);
+    }
+
+    /// <summary>The CPU's heat as a colour: blue when cool, green, yellow, orange, red when hot (92 °C and up).</summary>
+    internal static Rgb? Heat(int? celsius)
+    {
+        if (celsius is not { } c) return null;
+        (double At, Rgb Color)[] stops = [(50, new(30, 91, 255)), (62, new(43, 234, 90)), (75, new(255, 208, 0)), (85, new(255, 106, 26)), (92, new(255, 42, 42))];
+        if (c <= stops[0].At) return stops[0].Color;
+        for (var i = 1; i < stops.Length; i++)
+            if (c <= stops[i].At) return Rgb.Lerp(stops[i - 1].Color, stops[i].Color, (c - stops[i - 1].At) / (stops[i].At - stops[i - 1].At));
+        return stops[^1].Color;
     }
 
     /// <summary>1 the moment the key goes down, fading to 0.</summary>

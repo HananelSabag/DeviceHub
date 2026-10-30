@@ -453,3 +453,12 @@ input[type="range"] { accent-color: var(--accent, var(--hub)); }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
 }
+
+/* Settings: the health values, quiet and aligned to the end. */
+.health-value { color: var(--dim); font-weight: 700; text-align: end; max-width: 60ch; }
+/* The lightbar preview breathes or cycles only while its mode is on screen (CSS, no script). */
+.lightbar.breathing { animation: lb-breathe 3s ease-in-out infinite; }
+.lightbar.rainbow { animation: lb-rainbow 6s linear infinite; }
+@keyframes lb-breathe { 50% { opacity: 0.25; } }
+@keyframes lb-rainbow { to { filter: hue-rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .lightbar.breathing, .lightbar.rainbow { animation: none; } }

@@ -9,7 +9,8 @@ import { DEVICES, railHtml, overviewHtml, soundHtml, settingsHtml, devicePageHtm
 import { ANIMATED, recolor } from './effects.js';
 
 const app = {
-  settings: { language: 'he', switchCalls: true, keepInTray: true, batteryAlerts: true },
+  settings: { language: 'he', switchCalls: true, keepInTray: true, batteryAlerts: true, minimizeToTray: true },
+  health: null,         // how DeviceHub itself is doing (Settings)
   startWithWindows: false,
   version: '',
   page: 'overview',
@@ -56,6 +57,7 @@ function go(page) {
   $('#page').scrollTop = 0;
   renderAll();
   if (DEVICES.includes(page) && page !== 'laptop') send('settingsFor', { device: page });
+  if (page === 'settings') send('health');
 }
 
 // ---- The keyboard screen and the lighting preview ----
@@ -82,7 +84,7 @@ function previewTimer() {
   const layout = app.deviceSettings.keyboard?.layout;
   if (app.page !== 'keyboard' || !l?.enabled || !ANIMATED.includes(l.effect) || !layout) return;
   const start = performance.now();
-  animTimer = setInterval(() => recolor($('.kb-preview'), layout, l, (performance.now() - start) / 1000), 100);
+  animTimer = setInterval(() => recolor($('.kb-preview'), layout, { ...l, previewTemp: app.devices.laptop?.temperature }, (performance.now() - start) / 1000), 100);
 }
 document.addEventListener('visibilitychange', () => { if (document.hidden) clearInterval(animTimer); else previewTimer(); });
 
@@ -160,6 +162,8 @@ document.addEventListener('click', e => {
 
   if (d.page) { go(d.page); return; }
   if ('refresh' in d) { send('refresh'); return; }
+  if ('health' in d) { send('health'); return; }
+  if ('openLog' in d) { send('openLog'); return; }
   if (d.load) { send('settingsFor', { device: d.load }); return; }
   if (d.audio) { pressSound(d.audio); return; }
 
@@ -184,6 +188,7 @@ document.addEventListener('click', e => {
   const segEl = el.closest('[data-ctl]');
   if (segEl && d.v != null) {
     const [device, action] = segEl.dataset.ctl.split('.');
+    if (device === 'controller' && action === 'mode') { control('controller', 'mode', { mode: d.v, speed: app.deviceSettings.controller?.speed ?? 5 }, segEl); return; }
     if (device === 'controller' && action === 'player') { app.drafts.controller.player = Number(d.v); renderPage(); applyController(); return; }
     if (el.getAttribute('aria-checked') === 'true') return;
     control(device, action, /^-?\d+(\.\d+)?$/.test(d.v) ? Number(d.v) : d.v, segEl);
@@ -260,6 +265,7 @@ document.addEventListener('input', e => {
     if (layout) recolor($('.kb-preview'), layout, l, 0);
     return;
   }
+  if ('padSpeed' in d) { el.nextElementSibling.textContent = el.value; return; }
   if ('padBrightness' in d) {
     app.drafts.controller.brightness = Number(el.value);
     el.nextElementSibling.textContent = `${el.value}%`;
@@ -281,6 +287,7 @@ document.addEventListener('change', e => {
   const d = e.target.dataset;
   if (d.kb || ['main', 'accent', 'second'].includes(d.swatchCustom)) { applyLighting(); renderPage(); }
   else if ('padBrightness' in d || d.swatchCustom === 'pad') { applyController(); renderPage(); }
+  else if ('padSpeed' in d) control('controller', 'mode', { mode: app.deviceSettings.controller?.mode ?? 'breathing', speed: Number(e.target.value) });
   else if ('screenFile' in d) sendPicture(e.target.files?.[0]);
 });
 
@@ -360,6 +367,8 @@ on('deviceSettings', ({ device, settings }) => {
 });
 
 // The keyboard changes as you click, so it needs no "saved" note; the others confirm.
+on('health', h => { app.health = h; if (app.page === 'settings') renderPage(); });
+
 on('controlDone', c => {
   if (c.device === 'keyboard') return;
   toast(c.action === 'applyProfile' && app.lastProfile ? t('h.profile.applied', { name: app.lastProfile }) : t('saved'));

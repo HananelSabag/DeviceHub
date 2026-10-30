@@ -167,9 +167,25 @@ export function settingsHtml(app) {
         <div class="row"><div class="row-text"><b>${esc(t('set.tray'))}</b><small>${esc(t('set.tray.sub'))}</small></div>${toggle('keepInTray', app.settings.keepInTray)}</div>
         <div class="row"><div class="row-text"><b>${esc(t('set.startup'))}</b><small>${esc(t('set.startup.sub'))}</small></div>${toggle('startWithWindows', app.startWithWindows)}</div>
         <div class="row"><div class="row-text"><b>${esc(t('set.alerts'))}</b><small>${esc(t('set.alerts.sub'))}</small></div>${toggle('batteryAlerts', app.settings.batteryAlerts)}</div>
+        <div class="row"><div class="row-text"><b>${esc(t('set.minimize'))}</b><small>${esc(t('set.minimize.sub'))}</small></div>${toggle('minimizeToTray', app.settings.minimizeToTray)}</div>
       </section>
+      ${healthGroup(app)}
       <p class="note">${esc(t('set.about', { v: app.version }))}</p>
     </div>`;
+}
+
+/** How DeviceHub itself is doing: how long it has run, what it costs, what it has sent, and any errors. */
+function healthGroup(app) {
+  const h = app.health;
+  const line = (label, value) => `<div class="row"><div class="row-text"><b>${esc(label)}</b></div><span class="health-value">${value}</span></div>`;
+  return `<section class="group"><h2>${esc(t('hl.title'))}</h2>
+    ${h ? `${line(t('hl.running'), esc(t('hl.hours', { n: h.hours })))}
+      ${line(t('hl.cost'), esc(t('hl.costValue', { cpu: h.cpu.toFixed(2), mb: h.memory })))}
+      ${line(t('hl.frames'), esc(t('hl.framesValue', { k: h.keyFrames.toLocaleString('en-US'), s: h.screenFrames.toLocaleString('en-US'), p: h.padFrames.toLocaleString('en-US') })))}
+      ${line(t('hl.keyboard'), esc(t(h.keyboard ? 'hl.yes' : 'hl.no')))}
+      ${line(t('hl.errors'), h.errors ? `<bdi>${esc(h.lastError ?? '')}</bdi>` : esc(t('hl.none')))}` : `<div class="row"><span class="unknown">${esc(t('st.reading'))}</span></div>`}
+    <div class="row"><div class="row-text"><small>${esc(t('hl.note'))}</small></div><div class="text-line"><button class="btn" data-health>${esc(t('ov.refresh'))}</button><button class="btn" data-open-log>${esc(t('hl.log'))}</button></div></div>
+  </section>`;
 }
 
 // ---- Device pages ----
@@ -277,8 +293,8 @@ export function eqCurve(bands) {
     <polyline class="line" points="${line}"/></svg>`;
 }
 
-export const EFFECTS = ['static', 'breathing', 'wave', 'spectrum', 'gradient', 'music', 'reactive', 'ripple'];
-export const SCREENS = ['off', 'clock', 'devices', 'system', 'music', 'cycle', 'text', 'image', 'show', 'stars', 'matrix', 'energy', 'power', 'sound', 'goal'];
+export const EFFECTS = ['static', 'breathing', 'wave', 'spectrum', 'gradient', 'aurora', 'starlight', 'rain', 'fire', 'music', 'visualizer', 'temperature', 'reactive', 'ripple'];
+export const SCREENS = ['off', 'clock', 'analog', 'devices', 'system', 'music', 'cycle', 'text', 'image', 'show', 'stars', 'matrix', 'energy', 'power', 'fireworks', 'life', 'bounce', 'sound', 'goal'];
 
 /** Colour swatches with a custom picker at the end; withNone adds "no colour" first. */
 const swatches = (ctl, current, withNone = false) => `<div class="swatches" role="radiogroup" data-swatch="${ctl}">
@@ -294,11 +310,11 @@ function keyboardBody(app) {
   const l = app.drafts.keyboard.lighting;
   const scr = app.drafts.keyboard.screen;
   const fx = l.effect;
-  const colours = !l.enabled || fx === 'spectrum' || fx === 'wave' ? ''
-    : fx === 'gradient'
+  const colours = !l.enabled || ['spectrum', 'wave', 'fire', 'temperature'].includes(fx) ? ''
+    : ['gradient', 'aurora', 'visualizer'].includes(fx)
       ? row(t('k.from'), '', swatches('main', l.main)) + row(t('k.to'), '', swatches('second', l.second))
-    : fx === 'reactive' || fx === 'ripple'
-      ? row(t('k.press'), '', swatches('main', l.main)) + row(t('k.background'), '', swatches('second', l.second))
+    : ['reactive', 'ripple', 'starlight', 'rain'].includes(fx)
+      ? row(t(fx === 'reactive' || fx === 'ripple' ? 'k.press' : 'k.main'), '', swatches('main', l.main)) + row(t('k.background'), '', swatches('second', l.second))
       : row(t('k.main'), '', swatches('main', l.main)) + row(t('k.accent'), t('k.accent.sub'), swatches('accent', l.accent, true));
   const slider = (key, label, min, max, value, unit) => row(label, '', `<div class="slider-line"><input type="range" min="${min}" max="${max}" step="1" value="${value}" data-kb="${key}"><output>${value}${unit}</output></div>`);
   const lighting = `<section class="group"><h2>${esc(t('k.lighting'))}</h2>
@@ -306,9 +322,9 @@ function keyboardBody(app) {
       ${l.enabled ? `<div class="row stack"><div class="cards" role="radiogroup">${EFFECTS.map(e => `<button class="card-pick" role="radio" data-fx="${e}" aria-checked="${fx === e}">
           <span class="fx-swatch" style="background:${effectSwatch(e, l)}"></span><b>${esc(t(`fx.${e}`))}</b><small>${esc(t(`fx.${e}.sub`))}</small></button>`).join('')}</div></div>` : ''}
       ${colours}
-      ${l.enabled && ['breathing', 'spectrum', 'wave', 'reactive', 'ripple'].includes(fx) ? slider('speed', t('k.speed'), 1, 10, l.speed, '') : ''}
+      ${l.enabled && ['breathing', 'spectrum', 'wave', 'reactive', 'ripple', 'aurora', 'starlight', 'rain', 'fire'].includes(fx) ? slider('speed', t('k.speed'), 1, 10, l.speed, '') : ''}
       ${l.enabled ? slider('brightness', t('k.brightness'), 5, 100, l.brightness, '%') : ''}
-      <div class="row stack kb-wrap ${l.enabled ? '' : 'kb-off'}">${keyboardPreview(s.layout, l)}${l.enabled ? '' : `<span class="kb-off-note">${esc(t('k.ownNote'))}</span>`}</div>
+      <div class="row stack kb-wrap ${l.enabled ? '' : 'kb-off'}">${keyboardPreview(s.layout, { ...l, previewTemp: app.devices.laptop?.temperature })}${l.enabled ? '' : `<span class="kb-off-note">${esc(t('k.ownNote'))}</span>`}</div>
     </section>`;
 
   const option = scr.mode === 'text'
@@ -337,15 +353,20 @@ function controllerBody(app) {
   if (!d || d.state === 'missing') return empty(t('st.missing'), t('note.missing.controller'));
   if (d.link === 'bluetooth') return empty(t('c.bt'), t('c.bt.sub'));
   const c = app.drafts.controller;
-  const shown = scaleHex(c.color, c.brightness);
+  const s = app.deviceSettings.controller ?? {};
+  const mode = s.mode ?? 'static';
+  const shown = mode === 'battery' ? (d.battery >= 50 ? '#2BEA5A' : d.battery >= 20 ? '#FFD000' : '#FF2A2A') : scaleHex(c.color, c.brightness);
   const players = [0, 0x04, 0x0A, 0x15, 0x1B][c.player];
+  const coloured = mode === 'static' || mode === 'breathing';
   return `<section class="group"><h2>${esc(t('c.lights'))}</h2>
-      <div class="row stack"><div class="pad-preview"><span class="lightbar" style="--lb:${shown}"></span>
+      <div class="row stack"><div class="pad-preview"><span class="lightbar ${mode}" style="--lb:${shown}"></span>
         <span class="players">${[0, 1, 2, 3, 4].map(i => `<i class="${players & (1 << i) ? 'on' : ''}"></i>`).join('')}</span></div></div>
-      ${row(t('c.lightbar'), '', `<div class="swatches" role="radiogroup" data-swatch="pad">
+      ${row(t('c.mode'), t(`c.mode.${mode}.sub`), seg('controller.mode', ['static', 'breathing', 'rainbow', 'battery'].map(m => [m, t(`c.mode.${m}`)]), mode))}
+      ${coloured ? row(t('c.lightbar'), '', `<div class="swatches" role="radiogroup" data-swatch="pad">
         ${SWATCHES.map(h => `<button class="swatch" role="radio" style="--c:${h}" data-v="${h}" aria-checked="${c.color.toUpperCase() === h}" aria-label="${h}"></button>`).join('')}
-        <label class="swatch-custom"><input type="color" value="${c.color}" data-swatch-custom="pad"></label></div>`)}
-      ${row(t('c.brightness'), '', `<div class="slider-line"><input type="range" min="0" max="100" step="5" value="${c.brightness}" data-pad-brightness><output>${c.brightness}%</output></div>`)}
+        <label class="swatch-custom"><input type="color" value="${c.color}" data-swatch-custom="pad"></label></div>`) : ''}
+      ${coloured ? row(t('c.brightness'), '', `<div class="slider-line"><input type="range" min="0" max="100" step="5" value="${c.brightness}" data-pad-brightness><output>${c.brightness}%</output></div>`) : ''}
+      ${mode === 'breathing' || mode === 'rainbow' ? row(t('k.speed'), '', `<div class="slider-line"><input type="range" min="1" max="10" step="1" value="${s.speed ?? 5}" data-pad-speed><output>${s.speed ?? 5}</output></div>`) : ''}
       ${row(t('c.players'), t('c.players.sub'), seg('controller.player', [[0, t('c.off')], [1, '1'], [2, '2'], [3, '3'], [4, '4']], c.player))}
       ${row(t('c.mic'), t('c.mic.sub'), `<button class="toggle" role="switch" aria-checked="${c.mic}" data-pad-mic></button>`)}
     </section>

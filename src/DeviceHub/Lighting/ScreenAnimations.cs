@@ -20,6 +20,9 @@ internal abstract class ScreenAnimation
         "sound" => new SoundBars(),
         "goal" => new Goal(),
         "power" => new PowerUp(),
+        "life" => new Life(),
+        "fireworks" => new Fireworks(),
+        "bounce" => new Bounce(),
         "show" => new Show(),
         _ => null,
     };
@@ -262,7 +265,7 @@ internal abstract class ScreenAnimation
     /// </summary>
     internal sealed class Show : ScreenAnimation
     {
-        private static readonly string[] Acts = ["stars", "energy", "matrix", "goal", "power", "sound"];
+        private static readonly string[] Acts = ["stars", "energy", "matrix", "fireworks", "goal", "life", "power", "bounce", "sound"];
         private const double Act = 9, Blend = 0.9;
         private ScreenAnimation? current, next;
         private int index = -1;
@@ -311,6 +314,128 @@ internal abstract class ScreenAnimation
                     if ((src[y * 16 + sx / 8] & (0x80 >> (sx % 8))) != 0) o[y * 16 + x / 8] |= (byte)(0x80 >> (x % 8));
                 }
             return o;
+        }
+    }
+
+    /// <summary>
+    /// Conway's Game of Life on 2 × 2 pixel cells, ten generations a second. When it settles into stillness or a
+    /// loop, or after a minute, a fresh random world begins.
+    /// </summary>
+    private sealed class Life : ScreenAnimation
+    {
+        private const int Cols = 64, Rows = 20;
+        private bool[,] cells = new bool[Cols, Rows];
+        private readonly Queue<int> recent = new();
+        private double nextStep, born;
+
+        protected override void Draw(Graphics g, double t, double dt, float level)
+        {
+            if (t >= nextStep)
+            {
+                if (t - born > 60 || born == 0 && nextStep == 0) Seed(t);
+                Step();
+                var hash = Hash();
+                if (recent.Contains(hash)) Seed(t);
+                recent.Enqueue(hash);
+                if (recent.Count > 6) recent.Dequeue();
+                nextStep = t + 0.1;
+            }
+            for (var x = 0; x < Cols; x++)
+                for (var y = 0; y < Rows; y++)
+                    if (cells[x, y]) g.FillRectangle(Brushes.White, x * 2, y * 2, 2, 2);
+        }
+
+        private void Seed(double t)
+        {
+            for (var x = 0; x < Cols; x++)
+                for (var y = 0; y < Rows; y++)
+                    cells[x, y] = Rng.NextDouble() < 0.32;
+            recent.Clear();
+            born = t;
+        }
+
+        private void Step()
+        {
+            var next = new bool[Cols, Rows];
+            for (var x = 0; x < Cols; x++)
+                for (var y = 0; y < Rows; y++)
+                {
+                    var n = 0;
+                    for (var dx = -1; dx <= 1; dx++)
+                        for (var dy = -1; dy <= 1; dy++)
+                            if ((dx != 0 || dy != 0) && cells[(x + dx + Cols) % Cols, (y + dy + Rows) % Rows]) n++;
+                    next[x, y] = n == 3 || (n == 2 && cells[x, y]);
+                }
+            cells = next;
+        }
+
+        private int Hash()
+        {
+            var h = 17;
+            foreach (var c in cells) h = h * 31 + (c ? 1 : 0);
+            return h;
+        }
+    }
+
+    /// <summary>Fireworks: rockets climb with a trail, burst into a ring of sparks that fall and fade.</summary>
+    private sealed class Fireworks : ScreenAnimation
+    {
+        private readonly List<(double X, double Y, double Vx, double Vy, double Life, bool Rocket)> parts = [];
+        private double nextLaunch;
+
+        protected override void Draw(Graphics g, double t, double dt, float level)
+        {
+            if (t >= nextLaunch)
+            {
+                parts.Add((14 + Rng.NextDouble() * 100, 40, (Rng.NextDouble() - 0.5) * 12, -(48 + Rng.NextDouble() * 18), 0.5 + Rng.NextDouble() * 0.35, true));
+                nextLaunch = t + 0.5 + Rng.NextDouble() * 0.9;
+            }
+            for (var i = parts.Count - 1; i >= 0; i--)
+            {
+                var (x, y, vx, vy, life, rocket) = parts[i];
+                life -= dt;
+                if (rocket && life <= 0)
+                {
+                    // The burst: a ring of sparks, some faster than others.
+                    var n = 18 + Rng.Next(12);
+                    for (var k = 0; k < n; k++)
+                    {
+                        var a = k * Math.Tau / n;
+                        var s = 14 + Rng.NextDouble() * 10;
+                        parts.Add((x, y, Math.Cos(a) * s, Math.Sin(a) * s * 0.8, 0.7 + Rng.NextDouble() * 0.6, false));
+                    }
+                    parts.RemoveAt(i);
+                    continue;
+                }
+                if (life <= 0) { parts.RemoveAt(i); continue; }
+                vy += (rocket ? 30 : 18) * dt;
+                x += vx * dt; y += vy * dt;
+                parts[i] = (x, y, vx * (rocket ? 1 : 0.985), vy, life, rocket);
+                if (rocket) { Dot(g, x, y); Dot(g, x, y + 1); if (Rng.NextDouble() < 0.6) Dot(g, x - vx * 0.03, y + 3); }
+                else if (life > 0.25 || Rng.NextDouble() < life * 4) Dot(g, x, y);
+            }
+        }
+    }
+
+    /// <summary>The old DVD screensaver, with DeviceHub's name: it bounces off the edges and flashes when it hits a corner.</summary>
+    private sealed class Bounce : ScreenAnimation
+    {
+        private double x = 10, y = 6, vx = 26, vy = 14;
+        private double corner = -10;
+
+        protected override void Draw(Graphics g, double t, double dt, float level)
+        {
+            using var font = new Font("Segoe UI", 11, FontStyle.Bold, GraphicsUnit.Pixel);
+            const int w = 64, h = 16;
+            x += vx * dt; y += vy * dt;
+            bool hitX = false, hitY = false;
+            if (x <= 0 || x + w >= 128) { vx = -vx; x = Math.Clamp(x, 0, 128 - w); hitX = true; }
+            if (y <= 0 || y + h >= 40) { vy = -vy; y = Math.Clamp(y, 0, 40 - h); hitY = true; }
+            if (hitX && hitY) corner = t;
+            var flash = t - corner < 0.6 && (int)((t - corner) * 10) % 2 == 0;
+            if (flash) g.FillRectangle(Brushes.White, (float)x, (float)y, w, h);
+            else g.DrawRectangle(Pens.White, (float)x, (float)y, w - 1, h - 1);
+            g.DrawString("DeviceHub", font, flash ? Brushes.Black : Brushes.White, (float)x + 3, (float)y + 1);
         }
     }
 

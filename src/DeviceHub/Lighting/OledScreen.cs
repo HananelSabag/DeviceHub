@@ -99,6 +99,39 @@ internal static class OledScreen
         }
     }
 
+    /// <summary>A clock face on the left (hour, minute and second hands), the day and the date beside it.</summary>
+    public static byte[] Analog(DateTime now, bool english)
+    {
+        var (bmp, g) = Canvas();
+        using (bmp) using (g)
+        {
+            const float cx = 20, cy = 20, r = 18;
+            g.DrawEllipse(Pens.White, cx - r, cy - r, r * 2, r * 2);
+            for (var i = 0; i < 12; i++)
+            {
+                var a = i * Math.PI / 6;
+                var inner = i % 3 == 0 ? r - 4 : r - 2;
+                g.DrawLine(Pens.White, cx + (float)(Math.Sin(a) * inner), cy - (float)(Math.Cos(a) * inner), cx + (float)(Math.Sin(a) * (r - 1)), cy - (float)(Math.Cos(a) * (r - 1)));
+            }
+            void Hand(double turns, float length, int width)
+            {
+                using var pen = new Pen(Color.White, width);
+                var a = turns * Math.Tau;
+                g.DrawLine(pen, cx, cy, cx + (float)(Math.Sin(a) * length), cy - (float)(Math.Cos(a) * length));
+            }
+            Hand((now.Hour % 12 + now.Minute / 60.0) / 12, 9, 2);
+            Hand((now.Minute + now.Second / 60.0) / 60, 14, 2);
+            Hand(now.Second / 60.0, 15, 1);
+            var culture = CultureInfo.GetCultureInfo(english ? "en-GB" : "he-IL");
+            using var big = new Font(Digits, 17, FontStyle.Bold, GraphicsUnit.Pixel);
+            using var small = new Font(Body, 11, FontStyle.Bold, GraphicsUnit.Pixel);
+            var day = english ? now.ToString("dddd", culture) : culture.DateTimeFormat.GetDayName(now.DayOfWeek);
+            RightAligned(g, now.ToString("HH:mm", culture), big, 2);
+            RightAligned(g, day, small, 21);
+            return Pack(bmp);
+        }
+    }
+
     /// <summary>Text against the right edge, Hebrew or not (measured, so right-to-left text can't flip to the left).</summary>
     private static void RightAligned(Graphics g, string text, Font font, int y)
     {

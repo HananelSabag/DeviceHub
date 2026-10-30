@@ -18,6 +18,9 @@ internal sealed record ControlState
     /// <summary>The headset's settings saved under a name ("Games", "Music"…), applied together in one press.</summary>
     public List<HeadsetProfile> HeadsetProfiles { get; init; } = [];
     public DualSense.Lights? ControllerLights { get; init; }
+    /// <summary>static | breathing | rainbow | battery: anything but static is driven by the lighting engine.</summary>
+    public string ControllerMode { get; init; } = "static";
+    public int ControllerSpeed { get; init; } = 5;
     public KeyboardLighting? Lighting { get; init; }
     public OledSettings? Screen { get; init; }
 
@@ -52,7 +55,29 @@ internal static class DeviceControls
         var engine = LightingEngine.Instance;
         engine.English = english;
         engine.Configure(state.Lighting ?? new(), state.Screen ?? new(), LoadPicture());
+        engine.ConfigurePad(Pad());
         engine.Start();
+    }
+
+    private static PadEffect Pad() => new(state.ControllerMode, state.ControllerLights ?? new(0, 60, 255, 1, false), state.ControllerSpeed);
+
+    // ---- For the tray menu: the keyboard's effect and screen, and quick changes to them ----
+
+    public static KeyboardLighting Lighting => state.Lighting ?? new();
+    public static OledSettings Screen => state.Screen ?? new();
+
+    /// <summary>An effect by name, keeping its colours; "off" hands the lighting back to the keyboard.</summary>
+    public static void SetEffect(string effect)
+    {
+        var l = Lighting;
+        Remember(state with { Lighting = effect == "off" ? l with { Enabled = false } : l with { Enabled = true, Effect = effect } });
+        LightingEngine.Instance.Configure(Lighting, Screen);
+    }
+
+    public static void SetScreen(string mode)
+    {
+        Remember(state with { Screen = Screen with { Mode = mode } });
+        LightingEngine.Instance.Configure(Lighting, Screen);
     }
 
     private static List<(byte[], int)>? LoadPicture()
@@ -72,7 +97,7 @@ internal static class DeviceControls
             {
                 "mouse" => await Task.Run(() => RazerMouse.ReadSettings(hid)),
                 "headset" => new { state.Sidetone, state.AutoOff, eqPreset = state.EqPreset ?? (state.Eq is null ? null : "custom"), eq = state.Eq, presets = ArctisHeadset.Presets, profiles = state.HeadsetProfiles },
-                "controller" => new { lights = state.ControllerLights },
+                "controller" => new { lights = state.ControllerLights, mode = state.ControllerMode, speed = state.ControllerSpeed },
                 _ => null,
             };
         }
@@ -153,8 +178,17 @@ internal static class DeviceControls
 
                 case ("controller", "lights"):
                     var lights = value.Deserialize<DualSense.Lights>(Program.Json) ?? throw new ArgumentException("lights");
-                    await DualSense.SetLights(hid, lights);
+                    // A still colour is sent here; a moving one is the engine's (it picks up the new colour and lights).
+                    if (state.ControllerMode == "static") await DualSense.SetLights(hid, lights);
                     Remember(state with { ControllerLights = lights });
+                    LightingEngine.Instance.ConfigurePad(Pad());
+                    break;
+                case ("controller", "mode"):
+                    var mode = value.GetProperty("mode").GetString() ?? "static";
+                    if (mode is not ("static" or "breathing" or "rainbow" or "battery")) throw new ArgumentException($"no lightbar mode {mode}");
+                    Remember(state with { ControllerMode = mode, ControllerSpeed = value.TryGetProperty("speed", out var sp) ? Math.Clamp(sp.GetInt32(), 1, 10) : state.ControllerSpeed });
+                    if (mode == "static" && state.ControllerLights is { } still) await DualSense.SetLights(hid, still);
+                    LightingEngine.Instance.ConfigurePad(Pad());
                     break;
 
                 default: throw new ArgumentException($"unknown control {device}/{action}");
@@ -201,7 +235,7 @@ internal static class DeviceControls
         var present = hid.Select(h => h.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
         lit.RemoveWhere(p => !present.Contains(p)); // unplugged: it forgot, so send again next time
 
-        if (state.ControllerLights is { } lights
+        if (state.ControllerLights is { } lights && state.ControllerMode == "static" // moving lightbars are the engine's
             && hid.FirstOrDefault(x => x.Vid == DualSense.Vendor && x.Pid is DualSense.DualSensePid or DualSense.EdgePid && x.UsagePage == 0x01 && x.Usage == 0x05 && !x.Bluetooth) is { } pad
             && lit.Add(pad.Path))
         {

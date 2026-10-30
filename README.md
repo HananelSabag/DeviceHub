@@ -23,8 +23,8 @@ keyboard's screen), and starts with Windows only if you ask.
 |---|---|---|
 | **Razer Basilisk X HyperSpeed** (1532:0083) | Battery, polling rate, DPI, DPI stages, sleep time, low-battery warning | DPI stages and the active one, polling rate (125/500/1000 Hz), sleep time (1-15 min), low-battery warning (5-25 %). Every change is read back from the mouse. |
 | **SteelSeries Arctis 7+** (1038:220E) | Battery, charging, ChatMix | Sidetone (4 levels), auto-off (never - 90 min), 10-band equalizer and SteelSeries' four presets, and your own profiles ("Games", "Music"…) that apply all three in one press. Saved in the headset. |
-| **SteelSeries Apex 5** (1038:161C) | Connected | One switch hands the lighting to DeviceHub (off: the keyboard's own lighting). Effects: static with a W A S D / arrows accent, breathing, rainbow wave, spectrum, gradient, music (keys pulse with what the PC plays), key press (the key lights and fades) and ripple (a ring spreads from the key); speed and brightness. **The OLED screen:** clock, batteries, CPU / GPU, now playing (Spotify, a browser…), a rotation of those, your own text, your own picture or animated GIF, and animations drawn for DeviceHub: warp speed, matrix, an energy blast, a power-up, music bars and a goal, plus a show that plays them all with transitions (wipe, dissolve, iris, blinds, slide). |
-| **DualSense Edge** (054C:0DF2, and DualSense) | Battery, charging, USB or Bluetooth | Lightbar colour and brightness, player lights, mute-button light (USB). |
+| **SteelSeries Apex 5** (1038:161C) | Connected | One switch hands the lighting to DeviceHub (off: the keyboard's own lighting). Fourteen effects: static with a W A S D / arrows accent, breathing, rainbow wave, spectrum, gradient, aurora, starlight, rain, fire, music (keys pulse with what the PC plays), a sound meter, CPU heat (the whole board from blue to red with the CPU's temperature), key press (the key lights and fades) and ripple (a ring spreads from the key); speed and brightness. **The OLED screen:** clock, analog clock, batteries, CPU / GPU, now playing (Spotify, a browser…), a rotation of those, your own text, your own picture or animated GIF, and animations drawn for DeviceHub: warp speed, matrix, an energy blast, a power-up, fireworks, Conway's Game of Life, a bouncing logo, music bars and a goal, plus a show that plays them all with transitions (wipe, dissolve, iris, blinds, slide). |
+| **DualSense Edge** (054C:0DF2, and DualSense) | Battery, charging, USB or Bluetooth | Lightbar colour and brightness, still, breathing, rainbow or battery colour (green, yellow, red); player lights, mute-button light (USB). The moving lightbars pause while a full-screen game is in front. |
 | **Laptop** (Clevo-built GIGABYTE G5 KD) | CPU and GPU temperature and load (as Task Manager counts it), both fans' duty and real RPM, memory, the laptop's battery and its draw, Windows' power mode, the last 5 minutes of both temperatures | Windows' power mode (saving, balanced, performance). Fan control stays in the maker's Control Center on purpose. |
 | **Sound** | Every output and microphone, with the real device names (the Logitech speakers behind the UGREEN-90748 receiver, the monitor, the headset, the controller) | One press makes a device the default, for calls too if you want. |
 
@@ -38,10 +38,20 @@ Things the devices forget on their own are remembered by DeviceHub (`%LOCALAPPDA
 the controller's lights, the keyboard's effect and its screen are sent again whenever DeviceHub sees the device
 plugged in, and the headset's sidetone, auto-off and equalizer (which it cannot report back) are shown as last set.
 
-**In the tray.** Closing the window leaves DeviceHub in the tray, so effects and the screen keep going (0.05 % CPU with
-the wave and the screen running). The tray icon's tooltip shows every battery, a note comes when the mouse, headset or
-controller drops below 15 %, and *Start with Windows* starts it there quietly. Exit from the tray icon's menu.
-A second start opens the running one. A still picture on the screen shifts a pixel every two minutes so it never burns in.
+**In the tray.** Closing or minimizing the window leaves DeviceHub in the tray, by the clock, so effects and the screen
+keep going (0.05 % CPU with the wave and the screen running). One click on the icon opens the window; the right button
+opens a quick menu with every battery and the laptop's heat, and one-click changes of the sound device, the keyboard's
+effect and its screen. A note comes when the mouse, headset or controller drops below 15 %, and *Start with Windows*
+(one shortcut in the Startup folder) starts it there quietly. A second start opens the running one. A still picture on
+the screen shifts a pixel every two minutes so it never burns in. Settings shows how DeviceHub itself is doing (how long
+it has run, its CPU and memory, the frames it has sent, the last error), and `%LOCALAPPDATA%\DeviceHub\log.txt` records
+every start, every exit and why, and every error.
+
+**Why the keyboard needs DeviceHub running.** The Apex 5 has two ways to light up: the profile saved in its own memory
+(what it shows when DeviceHub is off), and a direct mode that shows whatever colours a program sends, live. Moving effects
+are frames, computed 20-30 times a second, so there is nothing to store; and the commands that write the keyboard's own
+memory are not public (OpenRGB drives this keyboard the same live way). SteelSeries GG, Razer Synapse, iCUE and G Hub work
+the same: their software effects, reactive keys and screen content all need the app running in the background.
 
 ## Safe with Easy Anti-Cheat
 

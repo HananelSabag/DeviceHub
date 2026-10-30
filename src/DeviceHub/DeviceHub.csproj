@@ -10,7 +10,7 @@
     <AssemblyName>DeviceHub</AssemblyName>
     <RootNamespace>DeviceHub</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>0.3.0</Version>
+    <Version>0.4.0</Version>
     <Product>DeviceHub</Product>
     <Authors>Hananel Sabag</Authors>
     <Description>A small control center for my own mouse, headset, keyboard, controller, laptop and sound devices.</Description>

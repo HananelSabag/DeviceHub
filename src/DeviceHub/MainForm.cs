@@ -40,6 +40,8 @@ internal sealed class MainForm : Form
     private bool watchScreen;
     private bool readingDevices;
     private bool readingSensors;
+    private List<DeviceReading> lastDevices = [];
+    private DeviceReading? lastLaptop;
 
     public MainForm(bool startHidden)
     {
@@ -57,7 +59,8 @@ internal sealed class MainForm : Form
         tray.Icon = Icon;
         tray.Text = "DeviceHub";
         tray.Visible = true;
-        tray.DoubleClick += (_, _) => ShowFromTray();
+        // One click on the icon opens the window; the right button opens the quick menu.
+        tray.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) ShowFromTray(); };
         BuildTrayMenu();
 
         Load += async (_, _) =>
@@ -79,6 +82,7 @@ internal sealed class MainForm : Form
                 HideToTray();
                 return;
             }
+            Log.Info($"closing: {e.CloseReason}{(exiting ? " (Exit from the tray menu)" : "")}");
             sensorTimer.Stop();
             deviceTimer.Stop();
             audioWatcher?.Dispose();
@@ -110,15 +114,91 @@ internal sealed class MainForm : Form
         base.SetVisibleCore(value);
     }
 
+    /// <summary>
+    /// The quick menu on the tray icon, filled each time it opens: every battery and the laptop's heat at the top,
+    /// then the sound device, the keyboard's lighting and screen and the lightbar, one click each; Open and Exit last.
+    /// </summary>
     private void BuildTrayMenu()
     {
-        var menu = new ContextMenuStrip { RightToLeft = I18n.English ? RightToLeft.No : RightToLeft.Yes };
-        menu.Items.Add(I18n.L("פתח את DeviceHub", "Open DeviceHub"), null, (_, _) => ShowFromTray());
-        menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add(I18n.L("יציאה", "Exit"), null, (_, _) => { exiting = true; Close(); });
+        var menu = new ContextMenuStrip { RightToLeft = I18n.English ? RightToLeft.No : RightToLeft.Yes, ShowCheckMargin = true, ShowImageMargin = false };
+        menu.Opening += (_, _) => FillTrayMenu(menu);
         tray.ContextMenuStrip?.Dispose();
         tray.ContextMenuStrip = menu;
     }
+
+    private void FillTrayMenu(ContextMenuStrip menu)
+    {
+        menu.Items.Clear();
+        var info = new ToolStripMenuItem("DeviceHub") { Enabled = false, Font = new Font(menu.Font, FontStyle.Bold) };
+        menu.Items.Add(info);
+        foreach (var d in lastDevices.Where(d => d.Battery is not null && d.State == DeviceState.Ready))
+            menu.Items.Add(new ToolStripMenuItem($"{Short(d.Id)}  {d.Battery}%{(d.Charging ? " ⚡" : "")}") { Enabled = false });
+        if (lastLaptop is { Temperature: { } cpu } l)
+            menu.Items.Add(new ToolStripMenuItem($"CPU {cpu}°{(l.GpuTemperature is { } gpu ? $"  ·  GPU {gpu}°" : "")}") { Enabled = false });
+        menu.Items.Add(new ToolStripSeparator());
+
+        // Sound: the outputs that are there now, the default one ticked.
+        var sound = new ToolStripMenuItem(I18n.L("צליל", "Sound"));
+        try
+        {
+            foreach (var o in AudioDevices.List().Outputs.Where(o => o.Active))
+            {
+                var id = o.Id;
+                sound.DropDownItems.Add(new ToolStripMenuItem(o.Name, null, async (_, _) =>
+                {
+                    try { await Task.Run(() => AudioDevices.SetDefault(id, settings.SwitchCalls)); PostAudio(); }
+                    catch (Exception ex) { Log.Error("tray sound", ex); }
+                }) { Checked = o.Default });
+            }
+        }
+        catch (Exception ex) { Log.Error("tray sound list", ex); }
+        menu.Items.Add(sound);
+
+        var lighting = DeviceControls.Lighting;
+        var effects = new ToolStripMenuItem(I18n.L("תאורת המקלדת", "Keyboard lighting"));
+        effects.DropDownItems.Add(new ToolStripMenuItem(I18n.L("של המקלדת (כבוי)", "Keyboard's own (off)"), null, (_, _) => TrayChange(() => DeviceControls.SetEffect("off"))) { Checked = !lighting.Enabled });
+        foreach (var (key, he, en) in EffectNames)
+            effects.DropDownItems.Add(new ToolStripMenuItem(I18n.L(he, en), null, (_, _) => TrayChange(() => DeviceControls.SetEffect(key))) { Checked = lighting.Enabled && lighting.Effect == key });
+        menu.Items.Add(effects);
+
+        var current = DeviceControls.Screen.Mode;
+        var screens = new ToolStripMenuItem(I18n.L("המסך במקלדת", "Keyboard screen"));
+        foreach (var (key, he, en) in ScreenNames)
+            screens.DropDownItems.Add(new ToolStripMenuItem(I18n.L(he, en), null, (_, _) => TrayChange(() => DeviceControls.SetScreen(key))) { Checked = current == key });
+        menu.Items.Add(screens);
+
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(I18n.L("פתח את DeviceHub", "Open DeviceHub"), null, (_, _) => ShowFromTray());
+        menu.Items.Add(I18n.L("יציאה (האפקטים ייעצרו)", "Exit (effects stop)"), null, (_, _) => { exiting = true; Close(); });
+    }
+
+    /// <summary>A change from the tray menu, then the open page brought up to date.</summary>
+    private async void TrayChange(Action change)
+    {
+        try
+        {
+            change();
+            if (pageReady && Visible) Post("deviceSettings", new { device = "keyboard", settings = await DeviceControls.ReadSettings("keyboard") });
+        }
+        catch (Exception ex) { Log.Error("tray", ex); }
+    }
+
+    private static readonly (string Key, string He, string En)[] EffectNames =
+    [
+        ("static", "סטטי", "Static"), ("breathing", "נשימה", "Breathing"), ("wave", "גל", "Wave"), ("spectrum", "ספקטרום", "Spectrum"),
+        ("gradient", "מעבר צבע", "Gradient"), ("aurora", "זוהר", "Aurora"), ("starlight", "כוכבים", "Starlight"), ("rain", "גשם", "Rain"),
+        ("fire", "אש", "Fire"), ("music", "מוזיקה", "Music"), ("visualizer", "מד צליל", "Sound meter"), ("temperature", "חום המעבד", "CPU heat"),
+        ("reactive", "לחיצה", "Key press"), ("ripple", "אדווה", "Ripple"),
+    ];
+
+    private static readonly (string Key, string He, string En)[] ScreenNames =
+    [
+        ("off", "כבוי", "Off"), ("clock", "שעון", "Clock"), ("analog", "שעון מחוגים", "Analog clock"), ("devices", "סוללות", "Batteries"),
+        ("system", "מחשב", "System"), ("music", "מה מתנגן", "Now playing"), ("cycle", "סבב", "Rotation"), ("text", "טקסט", "Text"),
+        ("image", "תמונה", "Picture"), ("show", "מופע", "Show"), ("stars", "מהירות האור", "Warp speed"), ("matrix", "מטריקס", "Matrix"),
+        ("energy", "כדור אנרגיה", "Energy ball"), ("power", "עלייה בכוח", "Power up"), ("fireworks", "זיקוקים", "Fireworks"),
+        ("life", "משחק החיים", "Game of Life"), ("bounce", "לוגו קופץ", "Bouncing logo"), ("sound", "פסי מוזיקה", "Music bars"), ("goal", "גול!", "Goal!"),
+    ];
 
     private void HideToTray()
     {
@@ -178,6 +258,13 @@ internal sealed class MainForm : Form
         if (web.CoreWebView2 is null) return;
         if (WindowState == FormWindowState.Minimized)
         {
+            if (settings.MinimizeToTray)
+            {
+                // Like Windows Security: minimized means into the tray, next to the clock.
+                HideToTray();
+                WindowState = FormWindowState.Normal; // hidden, so this only decides how it comes back
+                return;
+            }
             sensorTimer.Stop();
             deviceTimer.Stop();
             await SuspendPageAsync();
@@ -253,6 +340,30 @@ internal sealed class MainForm : Form
                     Post("deviceSettings", new { device = forDevice, settings = await DeviceControls.ReadSettings(forDevice) });
                     break;
 
+                case "health":
+                    // How DeviceHub itself is doing, for the health section in Settings.
+                    using (var self = Process.GetCurrentProcess())
+                    {
+                        var up = DateTime.Now - self.StartTime;
+                        var engine = LightingEngine.Instance;
+                        Post("health", new
+                        {
+                            started = self.StartTime,
+                            hours = Math.Round(up.TotalHours, 1),
+                            cpu = Math.Round(self.TotalProcessorTime.TotalSeconds / Math.Max(1, up.TotalSeconds) * 100 / Environment.ProcessorCount, 3),
+                            memory = self.WorkingSet64 / (1024 * 1024),
+                            keyFrames = engine.KeyFrames, screenFrames = engine.ScreenFrames, padFrames = engine.PadFrames,
+                            keyboard = engine.KeyboardConnected,
+                            errors = Log.Errors, lastError = Log.LastError,
+                            startup = Startup.Enabled,
+                        });
+                    }
+                    break;
+
+                case "openLog":
+                    if (File.Exists(Log.FilePath)) Process.Start("explorer.exe", $"/select,\"{Log.FilePath}\"")?.Dispose();
+                    break;
+
                 case "watchScreen":
                     // The keyboard page shows what the screen shows, live, only while it is open.
                     watchScreen = msg.GetProperty("on").GetBoolean();
@@ -312,6 +423,8 @@ internal sealed class MainForm : Form
         {
             Post("devicesBusy", new { });
             var list = await DeviceReader.ReadAllAsync();
+            lastDevices = list;
+            lastLaptop = list.FirstOrDefault(d => d.Id == "laptop") ?? lastLaptop;
             Post("devices", list);
             UpdateTray(list);
         }
@@ -343,7 +456,7 @@ internal sealed class MainForm : Form
     {
         if (readingSensors || IsDisposed) return;
         readingSensors = true;
-        try { Post("laptop", await Task.Run(DeviceReader.ReadLaptop)); }
+        try { lastLaptop = await Task.Run(DeviceReader.ReadLaptop); Post("laptop", lastLaptop); }
         catch (Exception ex) { ReportError("laptop", ex); }
         finally { readingSensors = false; }
     }
@@ -356,7 +469,7 @@ internal sealed class MainForm : Form
 
     private void ReportError(string cmd, Exception error)
     {
-        Debug.WriteLine($"{cmd}: {error}");
+        Log.Error(cmd, error);
         try { Post("error", new { cmd, message = error.Message }); }
         catch (Exception postError) { Debug.WriteLine(postError); } // WebView2 may already be closing; never escape an async event handler.
     }

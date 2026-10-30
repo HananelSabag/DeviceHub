@@ -131,11 +131,22 @@ internal static class Program
             return 0;
         }
 
+        // Whatever happens, the log says it: a DeviceHub that stopped can tell why next time.
+        Log.Info($"DeviceHub {Application.ProductVersion.Split('+')[0]} started{(args.Length > 0 ? " " + string.Join(' ', args) : "")}");
+        AppDomain.CurrentDomain.UnhandledException += (_, e) => Log.Error("crash", e.ExceptionObject as Exception ?? new Exception("unknown"));
+        TaskScheduler.UnobservedTaskException += (_, e) => { Log.Error("background task", e.Exception.GetBaseException()); e.SetObserved(); };
+        Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+        Application.ThreadException += (_, e) => Log.Error("window", e.Exception); // logged and carried on, never a dialog
+#if !DEBUG
+        Startup.Tidy();
+#endif
+
         ApplicationConfiguration.Initialize();
         var settings = AppSettings.Load();
         DeviceControls.StartLighting(settings.Language == "en");
         Application.Run(new MainForm(startHidden: args.Contains("--tray")));
         LightingEngine.Instance.Dispose();
+        Log.Info("DeviceHub ended");
         return 0;
     }
 
